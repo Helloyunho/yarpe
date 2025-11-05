@@ -80,8 +80,8 @@ Thanks https://github.com/shahrilnet/remote_lua_loader/blob/main/SETUP.md for th
 - `refbytearray(data)`: Returns a pointer to the content of bytearray object `data` that can then be passed to functions.
 
 ## Credits
-- @DrYenyen - Testing with me
-- @Gezine - For giving me some important clues
+- [@DrYenyen](https://github.com/DrYenyen) - Testing with me
+- [@Gezine](https://github.com/Gezine) - For giving me some important clues
 - [remote_lua_loader](https://github.com/shahrilnet/remote_lua_loader) - Being the reference for things like syscall
 - And anyone else who helped me!
 
