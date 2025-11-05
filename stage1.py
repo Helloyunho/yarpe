@@ -53,7 +53,7 @@ EXEC_OFFSETS = {
     "sceSysmoduleLoadModule": 0x83AF30,
 }
 
-DEBUG = True
+DEBUG = False
 PORT = 9025
 # END CHANGE ME
 
