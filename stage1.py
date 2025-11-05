@@ -695,15 +695,11 @@ class SploitCore(object):
         nogc.append(notify_buf)
 
         notify_buf[0x2C : 0x2C + 4] = bytes(p32a(0x10))  # use_icon_image_url
-        debugprint("[*] use_icon_image_url set")
         notify_buf[0x10 : 0x10 + 4] = bytes(p32a(0xFFFFFFFF))  # target_id
-        debugprint("[*] target_id set")
 
         msg_bytes = msg.encode("utf-8")
         notify_buf[0x2D : 0x2D + len(msg_bytes)] = msg_bytes
-        debugprint("[*] message set")
         notify_buf[0x42D : 0x42D + len(icon_uri)] = icon_uri
-        debugprint("[*] icon_uri set")
 
         dev_path = b"/dev/notification0\0"
         nogc.append(dev_path)
@@ -960,5 +956,3 @@ def poc():
 
 
 poc()
-
-# print("Hello (by Helloyunho :imwave:)")
