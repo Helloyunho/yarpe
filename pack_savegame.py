@@ -16,7 +16,6 @@ SCRIPT_PREFIX = """
 import traceback
 import base64
 
-DEBUG = %s
 
 # Decode embedded font
 font_data = base64.b64decode('''%s''')
@@ -72,17 +71,15 @@ def print_exc(string):
     print("[EXCEPTION] " + str(string))
 
 try:
+    print("===YET ANOTHER RENPY EXPLOIT===")
 
-""" % (
-    "True" if os.getenv("DEBUG") in ["1", "true", "True", "ON", "on"] else "False",
-    FONT_B64
-)
+""" % FONT_B64
 
 SCRIPT_SUFFIX = """
 
 except Exception as exc:
     exc_msg = traceback.format_exc().splitlines()[::-1]
-    print_exc("[EXCEPTION] " + str(exc_msg))
+    print_exc(str(exc_msg))
 """
 
 # indent the whole injected payload
