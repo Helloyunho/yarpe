@@ -680,8 +680,7 @@ class SploitCore(object):
         self.libkernel_addr = struct.unpack(
             "<Q", mod_info[SEGMENTS_OFFSET : SEGMENTS_OFFSET + 8]
         )[0]
-        print("[*] libkernel base address: 0x%x" % self.libkernel_base)
-
+        print("[*] libkernel base address: 0x%x" % self.libkernel_addr)
         init_proc_addr = struct.unpack(
             "<Q", mod_info[INIT_PROC_ADDR_OFFSET : INIT_PROC_ADDR_OFFSET + 8]
         )[0]
