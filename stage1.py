@@ -131,6 +131,7 @@ SYSCALL = {
     "listen": 106,
     "getsockname": 118,
     "netgetiflist": 125,
+    "sysctl": 202,
 }
 
 O_WRONLY = 1
@@ -626,6 +627,9 @@ class SploitCore(object):
         self.call_functype = None
         self.call_functype_ptr = None
         self._prepare_call()
+
+        self.platform = None
+        self.version = None
         self._prepare_syscall()
 
     @property
@@ -755,6 +759,16 @@ class SploitCore(object):
             print("[*] syscall gadget address: 0x%x" % self.syscall_addr)
         else:
             raise Exception("Unknown platform (delta: 0x%x)" % delta)
+
+        buf = alloc(8)
+        size = alloc(8)
+        size[0:8] = struct.pack("<Q", 8)
+        if self.sysctl("kern.sdk_version", buf, size):
+            lower, upper = struct.unpack("<BB", buf[0:2])
+            self.version = "%x.%02x" % (upper, lower)
+            print("[*] Detected OS version: %s" % self.version)
+        else:
+            print("[*] Could not detect OS version")
 
     def run_function(
         self,
@@ -992,6 +1006,72 @@ class SploitCore(object):
             if name in ["eth0", "wlan0"] and ip not in ["0.0.0.0", "127.0.0.1"]:
                 return ip
 
+    def sysctl(self, name, oldp=0, oldlenp=0, newp=0, newlenp=0):
+        name_bytes = name + b"\0"
+        nogc.append(name_bytes)
+        translate_name_mib = alloc(8)
+        buf_size = 0x70
+        mib = alloc(buf_size)
+        size = alloc(8)
+        size[0:8] = struct.pack("<Q", buf_size)
+        translate_name_mib[0:8] = struct.pack("<Q", 0x300000000)
+
+        if (
+            self.run_function(
+                SYSCALL["sysctl"],
+                translate_name_mib,
+                2,
+                mib,
+                size,
+                name_bytes,
+                len(name),
+                syscall=True,
+            )
+            < 0
+        ):
+            raise Exception(
+                "sysctl failed to translate name to mib, errno: %d\n%s"
+                % (self.errno, self.get_error_string())
+            )
+
+        if (
+            self.run_function(
+                SYSCALL["sysctl"],
+                mib,
+                2,
+                oldp,
+                oldlenp,
+                newp,
+                newlenp,
+                syscall=True,
+            )
+            < 0
+        ):
+            return False
+
+        return True
+
+    def get_sysctl_int(self, name):
+        buf = alloc(4)
+        size_buf = alloc(8)
+        size_buf[0:8] = struct.pack("<Q", 4)
+
+        if not self.sysctl(name, buf, size_buf):
+            raise Exception("sysctl %s failed" % name)
+
+        return struct.unpack("<I", buf[0:4])[0]
+
+    def set_sysctl_int(self, name, value):
+        buf = alloc(4)
+        size_buf = alloc(8)
+        buf[0:4] = struct.pack("<I", value)
+        size_buf[0:8] = struct.pack("<Q", 4)
+
+        if not self.sysctl(name, 0, 0, buf, size_buf):
+            raise Exception("sysctl %s failed" % name)
+
+        return True
+
     # def _refresh_modules(self):
     #     counts = b"\0" * 0x8
     #     modules = b"\0" * 0x4 * 256
@@ -1099,9 +1179,7 @@ def create_tcp_socket(sc):
 
 
 def poc():
-    print(
-        "[*] Detected console kind: %s, game name: %s" % (CONSOLE_KIND, config.name)
-    )
+    print("[*] Detected console kind: %s, game name: %s" % (CONSOLE_KIND, config.name))
     if not SELECTED_GADGETS or not SELECTED_LIBC or not SELECTED_EXEC:
         raise Exception("Unsupported game / console kind combination")
     print("[*] Will exploit the game")
