@@ -1039,7 +1039,7 @@ SELECTED_KERNEL_VERSION_OFFSETS = (
     else PS5_KERNEL_VERSION_OFFSETS.get(sc.version)
 )
 if SELECTED_KERNEL_VERSION_OFFSETS is None:
-    raise Exception(f"Unsupported kernel version: {sc.version}")
+    raise Exception("Unsupported kernel version: %s" % sc.version)
 
 SYSCALL["unlink"] = 0xA
 SYSCALL["pipe"] = 42
@@ -1216,7 +1216,7 @@ def get_core_index(mask_addr):
     num = readuint(mask_addr, 4)
     pos = 0
     while num > 0:
-        num = num >> 1
+        num >>= 1
         pos += 1
 
     return pos - 1
@@ -1226,9 +1226,8 @@ def get_current_core():
     level = 3
     which = 1
     id = 0xFFFFFFFFFFFFFFFF  # -1
-    setsize = 0x10
     mask = alloc(0x10)
-    sc.syscalls.cpuset_getaffinity(level, which, id, setsize, mask)
+    sc.syscalls.cpuset_getaffinity(level, which, id, 0x10, mask)
     return get_core_index(get_ref_addr(mask))
 
 
