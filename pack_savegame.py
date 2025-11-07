@@ -9,7 +9,8 @@ payload = f.readlines()
 f.close()
 
 # Read base64 encoded font
-import os
+# Read base64 encoded font
+script_dir = os.path.dirname(os.path.abspath(__file__))
 script_dir = os.path.dirname(os.path.abspath(__file__))
 font_b64_path = os.path.join(script_dir, "mono_b64.txt")
 
