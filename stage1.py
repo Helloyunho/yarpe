@@ -307,6 +307,10 @@ def get_ref_addr(obj):
     elif isinstance(obj, unicode):
         utf8data = obj.encode("utf-8") + b"\0"
         return refbytes(utf8data)
+    elif isinstance(obj, StructureInstance):
+        return refbytearray(obj.buf)
+    elif isinstance(obj, int):
+        return obj
     else:
         raise Exception("Unsupported object type for get_ref_addr")
 
@@ -858,6 +862,108 @@ class SyscallContainer(object):
         return self.syscalls[syscall_name]
 
 
+class Structure(object):
+    def __init__(self, sizes):
+        self.sizes = sizes
+        self.calculate()
+
+    def calculate(self):
+        self.size = 0
+        self.offsets = {}
+        for field_name, field_size in self.sizes.items():
+            self.offsets[field_name] = self.size
+            self.size += field_size
+
+    def create(self, defaults=None):
+        buf = StructureInstance(self, defaults)
+        return buf
+
+
+class StructureInstance(object):
+    def __init__(self, structure, defaults=None):
+        self.structure = structure
+        self.buf = alloc(self.structure.size)
+        self.addr = get_ref_addr(self.buf)
+        if defaults:
+            for key, value in defaults.items():
+                self.set_field(key, value)
+
+    def reset(self):
+        self.buf[:] = b"\0" * len(self.buf)
+
+    def set_field_raw(self, field_name, data):
+        offset = self.structure.offsets[field_name]
+        field_size = self.structure.sizes[field_name]
+        self.buf[offset : offset + field_size] = data
+
+    def set_field(self, field_name, value):
+        offset = self.structure.offsets[field_name]
+        field_size = self.structure.sizes[field_name]
+        if field_size in [1, 2, 4, 8]:
+            converted_val = get_ref_addr(value)
+            if field_size == 1:
+                value = struct.pack("<B", converted_val)
+            elif field_size == 2:
+                value = struct.pack("<H", converted_val)
+            elif field_size == 4:
+                value = struct.pack("<I", converted_val)
+            elif field_size == 8:
+                value = struct.pack("<Q", converted_val)
+
+            self.buf[offset : offset + field_size] = value
+        else:
+            self.set_field_raw(field_name, value)
+
+    def get_field_raw(self, field_name):
+        offset = self.structure.offsets[field_name]
+        size = self.structure.sizes[field_name]
+        return self.buf[offset : offset + size]
+
+    def get_field(self, field_name):
+        offset = self.structure.offsets[field_name]
+        size = self.structure.sizes[field_name]
+        data = self.buf[offset : offset + size]
+        if size in [1, 2, 4, 8]:
+            if size == 1:
+                return struct.unpack("<B", data)[0]
+            elif size == 2:
+                return struct.unpack("<H", data)[0]
+            elif size == 4:
+                return struct.unpack("<I", data)[0]
+            elif size == 8:
+                return struct.unpack("<Q", data)[0]
+        else:
+            return data
+
+    def __setitem__(self, key, value):
+        if key in self.structure.offsets:
+            self.set_field(key, value)
+        else:
+            raise KeyError("No such field: %s" % key)
+
+    def __getitem__(self, key):
+        if key in self.structure.offsets:
+            return self.get_field(key)
+        else:
+            raise KeyError("No such field: %s" % key)
+
+    def __setattr__(self, name, value):
+        if name in ("structure", "buf"):
+            object.__setattr__(self, name, value)
+        elif name in self.structure.offsets:
+            self.set_field(name, value)
+        else:
+            raise AttributeError("No such field: %s" % name)
+
+    def __getattr__(self, name):
+        if name in ("structure", "buf"):
+            return object.__getattribute__(self, name)
+        elif name in self.structure.offsets:
+            return self.get_field(name)
+        else:
+            raise AttributeError("No such field: %s" % name)
+
+
 class SploitCore(object):
     def __init__(self):
         self.mem = getmem()
@@ -1130,56 +1236,6 @@ class SploitCore(object):
             raise Exception("sysctl %s failed" % name)
 
         return True
-
-    # def _refresh_modules(self):
-    #     counts = b"\0" * 0x8
-    #     modules = b"\0" * 0x4 * 256
-    #     nogc.append(counts)
-    #     nogc.append(modules)
-
-    #     self.run_function(592, refbytes(modules), 256, refbytes(counts), syscall=True)
-
-    #     for i in range(struct.unpack("<Q", counts)[0]):
-    #         module_handle = struct.unpack(
-    #             "<I", modules[i * 4 : i * 4 + 4]
-    #         )[0]
-
-    #         module_info = b"\0" * 0x160
-    #         nogc.append(module_info)
-    #         self.run_function(
-    #             593,
-    #             module_handle,
-    #             refbytes(module_info),
-    #             syscall=True,
-    #         )
-
-    #         name_addr = struct.unpack(
-    #             "<Q", module_info[:8]
-    #         )[0]
-    #         name = get_cstring(self.mem, name_addr).lower()
-
-    #         self.modules[module_handle] = mod
-
-    # def load_module(self, name):
-    #     name_no_ext = name.lower().replace(".dll", "")
-
-    #     # Check if module is already cached and retrieve it
-    #     if name_no_ext in self.modules:
-    #         return self.modules[name_no_ext]
-
-    #     name_wstring = (name + "\0").encode("utf-16le")
-
-    #     handle = self.kernelx.GetModuleHandleW(refbytes(name_wstring))
-    #     if handle == 0:
-    #         handle = self.kernelx.LoadLibraryW(refbytes(name_wstring))
-
-    #     if handle == 0:
-    #         raise Exception("Failed to get module '%s'" % name)
-
-    #     mod = ExecutableModule(self, self.mem, handle)
-    #     # Cache result
-    #     self.modules[name_no_ext] = mod
-    #     return mod
 
 
 sockaddr_in = bytearray(b"\0" * 16)
