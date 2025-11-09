@@ -26,6 +26,8 @@ jobs:
         python-version: "2.7"
         cache-build: true
     - name: Pickle the save
+      env:
+        YARPE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
       run: |
         python2 pack_savegame.py
     - name: Upload save to artifact

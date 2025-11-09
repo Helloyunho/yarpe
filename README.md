@@ -93,6 +93,7 @@ Thanks https://github.com/shahrilnet/remote_lua_loader/blob/main/SETUP.md for th
 - `refbytearray(data)`: Returns a pointer to the content of bytearray object `data` that can then be passed to functions.
 - `alloc(size)`: Allocates `size` bytes in the game's memory and returns the bytearray.
 - `get_ref_addr(data)`: Returns the address of the content of bytes/bytearray object `data`.
+- `SHARED_VARS`: A dictionary that can be used to share data between multiple payloads.
 
 ## Credits
 - [@DrYenyen](https://github.com/DrYenyen) - Testing with me

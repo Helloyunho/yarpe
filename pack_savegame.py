@@ -21,11 +21,12 @@ with open(font_b64_path, "r") as f:
     FONT_B64 = f.read()
     print("Loaded font: " + str(len(FONT_B64)) + " bytes (base64)")
 
-SCRIPT_PREFIX = (
-    """
+SCRIPT_PREFIX = """
 import traceback
 import base64
 
+
+__version__ = "%s"
 
 # Decode embedded font
 font_data = base64.b64decode('''%s''')
@@ -93,10 +94,11 @@ def print_exc(string):
     print("An error occurred! Press X(or O) to continue.{w}")
 
 try:
-    print("===YET ANOTHER RENPY EXPLOIT===")
+    print("=== YET ANOTHER RENPY EXPLOIT " + __version__ + " ===")
 
-"""
-    % FONT_B64
+""" % (
+    os.getenv("YARPE_VERSION", "custom build"),
+    FONT_B64,
 )
 
 SCRIPT_SUFFIX = """
