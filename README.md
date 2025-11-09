@@ -7,8 +7,8 @@ Yet another Ren'Py PlayStation exploit
 
 ## Supported games
 
-- A YEAR OF SPRINGS PS4 (CUSA30428)
-- Arcade Spirits: The New Challengers PS4 (CUSA32097)
+- A YEAR OF SPRINGS PS4 (CUSA30428, CUSA30429, CUSA30430, CUSA30431)
+- Arcade Spirits: The New Challengers PS4 (CUSA32096, CUSA32097)
 
 ## How to use
 
