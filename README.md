@@ -38,7 +38,7 @@ Thanks https://github.com/shahrilnet/remote_lua_loader/blob/main/SETUP.md for th
 > [!NOTE]
 > Guide below assumes you already made a save file in the game you want to modify.
 
-### Changing the save data on PS4/PS4 Slim/PS4 Pro/
+### Changing the save data on PS4/PS4 Slim/PS4 Pro
 
 #### Jailbroken
 
@@ -75,7 +75,7 @@ Thanks https://github.com/shahrilnet/remote_lua_loader/blob/main/SETUP.md for th
 #### PS4
 3. Follow the "PSN-Activated" PS4/PS4 Slim/PS4 Pro guide above until step 7 to export the save data to USB drive.
 
-#### PSN-Activated PS5/PS5 Slim/PS5 Pro -
+#### PSN-Activated PS5/PS5 Slim/PS5 Pro
 4. Make sure you're logged-in to the PSN-activated user.
 5. Connect your USB drive to the PS5/PS5 Slim/PS5 Pro.
 6. Use the PS5 settings menu to import the encrypted save data from the USB drive. (`Saved Data and Game/App Settings -> Saved Data (PS4) -> Copy or Delete from USB Drive -> Select your game and import`)
