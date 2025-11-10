@@ -1059,7 +1059,7 @@ class SploitCore(object):
         self.libkernel_addr = mod_info.segments
         print("[*] libkernel base address: 0x%x" % self.libkernel_addr)
         init_proc_addr = mod_info.init_proc_addr
-        delta = self.libkernel_addr - init_proc_addr
+        delta = init_proc_addr - self.libkernel_addr
 
         if delta == 0:
             self.platform = "ps4"
