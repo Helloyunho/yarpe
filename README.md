@@ -28,7 +28,6 @@ Yet another Ren'Py PlayStation exploit
 Thanks https://github.com/shahrilnet/remote_lua_loader/blob/main/SETUP.md for the base of this guide.
 
 ### "Pickling" the save data (Can be skipped if you download the pre-made save file from releases)
- - Prerequisites: Python 2.7.18
  - Run `python2 pack_savegame.py` to generate `1-1-LT1.save`.
     - You can set the `DEBUG` environment variable to `1` or `true` to enable debug messages.
 
