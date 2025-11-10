@@ -1,5 +1,5 @@
 from types import CodeType, FunctionType
-from etc import addrof, sizeof
+from etc import addrof, bytes
 from pack import p64a, unpack
 from ref import refbytes
 from constants import nogc
@@ -21,7 +21,7 @@ INT64_MAX = (1 << 63) - 1
 INT32_MAX = (1 << 31) - 1
 INT32_MIN = -(1 << 31)
 
-TUPLE_HEADER_LEN = sizeof(())
+TUPLE_HEADER_LEN = type(tuple()).__sizeof__(tuple())
 
 mem = None  # cache the result
 reusable_tuple = (None,)

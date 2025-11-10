@@ -1808,9 +1808,9 @@ def make_aliased_rthdrs(sds):
 def hexdump(data):
     for i in range(0, len(data), 16):
         chunk = data[i : i + 16]
-        hex_bytes = " ".join(f"{b:02x}" for b in chunk)
+        hex_bytes = " ".join("%02x" % b for b in chunk)
         ascii_bytes = "".join((chr(b) if 32 <= b < 127 else ".") for b in chunk)
-        print(f"{i:08x}  {hex_bytes:<48}  {ascii_bytes}")
+        print("{:08x}  {:<48}  {}".format(i, hex_bytes, ascii_bytes))
 
 
 def race_one(request_addr, tcp_sd, sds):

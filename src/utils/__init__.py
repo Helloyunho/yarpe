@@ -1,4 +1,4 @@
-import renpy
+import rp
 import unsafe
 import ref
 from etc import *

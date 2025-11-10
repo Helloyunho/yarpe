@@ -2,27 +2,28 @@ import pickle
 import renpy
 import zipfile
 import os
-import glob
 import struct
 
 version = os.getenv("YARPE_VERSION", "custom build")
 
 SCRIPT = """
 import sys
+import traceback
 sys.path.insert(0, "/saves/yarpe")
 
 import constants
-print(dir(constants))
 from constants import VERSION
-from utils import print, print_exc
+from utils.rp import log, log_exc
 
+constants.rp = renpy
 
 try:
-    # print("=== YET ANOTHER RENPY EXPLOIT " + VERSION + " ===")
+    log("=== YET ANOTHER RENPY EXPLOIT " + VERSION + " ===")
+    scope = dict(globals(), **locals())
     execfile("/saves/yarpe/main.py")
 except Exception as exc:
     exc_msg = traceback.format_exc()
-    print_exc(exc_msg)
+    log_exc(exc_msg)
 """
 
 
@@ -99,8 +100,14 @@ def main():
             if filepath in ["/saves/1-1-LT1.save", "/saves/persistent"]:
                 continue
 
-            zip_path = filepath[7:]
-            local_path = "src/" + zip_path[len("yarpe/") :]
+            split_path = filepath[7:].split("/")
+            zip_path = "".join(
+                [
+                    ("_%s_" % x) if i != len(split_path) - 1 else x
+                    for i, x in enumerate(split_path)
+                ]
+            )
+            local_path = "src/" + filepath[7:][len("yarpe/") :]
             zipf.write(local_path, zip_path)
 
 

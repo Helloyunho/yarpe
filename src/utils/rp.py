@@ -1,7 +1,6 @@
-import renpy
-from constants import FONT_PATH
+from constants import FONT_PATH, rp
 
-__all__ = ["print", "print_exc"]
+__all__ = ["log", "log_exc"]
 
 debug_log = []
 exception_occurred = False
@@ -15,7 +14,7 @@ def delete_last_line(event, interact=True, **kwargs):
         debug_log.pop()
 
 
-debug_char = renpy.store.Character(
+debug_char = rp.store.Character(
     None,
     callback=delete_last_line,
     what_color="#00ff00",
@@ -24,12 +23,12 @@ debug_char = renpy.store.Character(
     what_xalign=0.0,
     what_yalign=0.0,
     what_outlines=[(2, "#000000", 0, 0)],
-    what_background=renpy.store.Solid("#000000"),
+    what_background=rp.store.Solid("#000000"),
     ctc=None,
     ctc_pause=None,
     ctc_timedpause=None,
     what_slow_cps=0,
-    window_background=renpy.store.Solid("#000000"),
+    window_background=rp.store.Solid("#000000"),
     window_xfill=True,
     window_yfill=True,
     window_xalign=0.0,
@@ -43,18 +42,18 @@ debug_char = renpy.store.Character(
 )
 
 
-def print(*args):
+def log(*args):
     global debug_log
-    strings = " ".join([str(arg) for arg in list(args)]).split("\\n")
+    strings = " ".join([str(arg) for arg in list(args)]).split("\n")
     debug_log.extend(strings)
     if len(debug_log) > 32:
         debug_log = debug_log[-32:]
-    full_msg = "{nw}" + "\\n".join(debug_log)
-    renpy.invoke_in_new_context(debug_char, full_msg)
+    full_msg = "{nw}" + "\n".join(debug_log)
+    rp.game.invoke_in_new_context(debug_char, full_msg)
 
 
-def print_exc(string):
+def log_exc(string):
     global exception_occurred
-    print("{b}[EXCEPTION] " + string + "{/b}")
+    log("{b}[EXCEPTION] " + string + "{/b}")
     exception_occurred = True
-    print("An error occurred! Press X(or O) to continue.{w}")
+    log("An error occurred! Press X(or O) to continue.{w}")

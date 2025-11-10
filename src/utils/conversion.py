@@ -1,3 +1,5 @@
+from etc import bytes
+
 __all__ = ["u64", "u64_to_i64", "u32_to_i32", "get_cstring"]
 
 
