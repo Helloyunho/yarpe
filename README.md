@@ -12,8 +12,9 @@ Yet another Ren'Py PlayStation exploit
     - [Changing the save data on PS4/PS4 Slim/PS4 Pro/](#changing-the-save-data-on-ps4ps4-slimps4-pro)
         - [Jailbroken](#jailbroken)
         - [PSN(or fake)-Activated](#psnor-fake-activated)
-    - [Changing the save data on PS5/PS5 Slim/PS5 Pro](#changing-the-save-data-on-ps5ps5-slimps5-pro)
+    - [Changing the save data on PS5/PS5 Slim/PS5 Pro (Only works with PS4 games)](#changing-the-save-data-on-ps5ps5-slimps5-pro-only-works-with-ps4-games)
     - [Run custom code on the game](#run-custom-code-on-the-game)
+    - [Updating yarpe](#updating-yarpe)
 - [Python API](#python-api)
 - [Credits](#credits)
 - [Disclaimer](#disclaimer)
@@ -41,25 +42,27 @@ Thanks https://github.com/shahrilnet/remote_lua_loader/blob/main/SETUP.md for th
 
 #### Jailbroken
 
-1. Use Apollo Save Tool to export decrypted save data to USB drive by using the "Copy save game to USB" option.
-2. Go to (/PS4/APOLLO/id_{YOUR_GAME_CUSA_ID}_savedata) and copy `1-1-LT1.save` to that folder, replacing the existing file.
-3. Use Apollo Save Tool to import the new save data from USB drive with "Copy save game to HDD".
-4. Run the game and see if the save data is changed(by looking at the save image).
+1. Download and extract `save.zip` file to your PC.
+2. Use Apollo Save Tool to export decrypted save data to USB drive by using the "Copy save game to USB" option.
+3. Go to (/PS4/APOLLO/id_{YOUR_GAME_CUSA_ID}_savedata) and copy all the content in `save.zip` to that folder, replacing the existing file.
+4. Use Apollo Save Tool to import the new save data from USB drive with "Copy save game to HDD".
+5. Run the game and see if the save data is changed(by looking at the save image).
 
 #### PSN(or fake)-Activated
 
-1. Make sure you're logged-in to the PSN(or fake)-activated user.
-2. Connect your USB drive to the PS4/PS4 Slim/PS4 Pro.
-3. Use the PS4 settings menu to export the save data to USB. (`Settings -> Application Saved Data Management -> Saved Data in System Storage -> Copy to USB Storage Device -> Select your game and copy`)
-4. You should have `SAVEDATA00` and `SAVEDATA00.bin` files in `/PS4/SAVEDATA/(hash)/CUSA(your game id)/` on the USB drive. Use either Save Wizard or Discord bot to decrypt the save data.
-5. Go to the decrypted save data folder and copy `1-1-LT1.save` to that folder, replacing the existing file.
-6. Use either Save Wizard or Discord bot to encrypt the modified save data again.
-7. Put the encrypted `SAVEDATA00` and `SAVEDATA00.bin` files back to `/PS4/SAVEDATA/(hash)/CUSA(your game id)/` on the USB drive.
-8. Connect the USB drive to the PS4/PS4 Slim/PS4 Pro.
-9. Use the PS4 settings menu to import the modified save data from USB. (`Settings -> Application Saved Data Management -> Saved Data on USB Storage Device -> Copy to System Storage -> Select your game and copy`)
-10. Run the game and see if the save data is changed(by looking at the save image).
+1. Download and extract `save.zip` file to your PC.
+2. Make sure you're logged-in to the PSN(or fake)-activated user.
+3. Connect your USB drive to the PS4/PS4 Slim/PS4 Pro.
+4. Use the PS4 settings menu to export the save data to USB. (`Settings -> Application Saved Data Management -> Saved Data in System Storage -> Copy to USB Storage Device -> Select your game and copy`)
+5. You should have `SAVEDATA00` and `SAVEDATA00.bin` files in `/PS4/SAVEDATA/(hash)/CUSA(your game id)/` on the USB drive. Use either Save Wizard or Discord bot to decrypt the save data.
+6. Go to the decrypted save data folder and copy all the content in `save.zip` to that folder, replacing the existing file.
+7. Use either Save Wizard or Discord bot to encrypt the modified save data again.
+8. Put the encrypted `SAVEDATA00` and `SAVEDATA00.bin` files back to `/PS4/SAVEDATA/(hash)/CUSA(your game id)/` on the USB drive.
+9. Connect the USB drive to the PS4/PS4 Slim/PS4 Pro.
+10. Use the PS4 settings menu to import the modified save data from USB. (`Settings -> Application Saved Data Management -> Saved Data on USB Storage Device -> Copy to System Storage -> Select your game and copy`)
+11. Run the game and see if the save data is changed(by looking at the save image).
 
-### Changing the save data on PS5/PS5 Slim/PS5 Pro
+### Changing the save data on PS5/PS5 Slim/PS5 Pro (Only works with PS4 games)
 
 - Requirements:
     - PSN-activated PS5/PS5 Slim/PS5 Pro. Can be non-recent offline firmware if was activated in the past.
@@ -83,6 +86,13 @@ Thanks https://github.com/shahrilnet/remote_lua_loader/blob/main/SETUP.md for th
 2. Prepare a python script that you want to run on the game.
 3. Send the script data to the console on port 9025.
 4. The script will be executed on the game.
+
+### Updating yarpe
+
+1. Download `save.zip` to your PC.
+2. Run `updater.py`(`updater_for_up_to_2.x.x.py` for versions up to 2.x.x) on the console. (Check [the above](#run-custom-code-on-the-game) for how to run custom code on the game)
+3. Send the `save.zip` file to the console using the same method as above.
+4. Press X(or O) to exit the game when prompted.
 
 ## Python API
 
