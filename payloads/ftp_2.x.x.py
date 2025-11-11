@@ -136,16 +136,11 @@ def inet_aton(ipstr):
 def inet_ntoa(n):
     return ".".join(str((n>>s) & 0xFF) for s in (24,16,8,0))
 
-# --- File/stat helpers (mirror your Lua offsets) ---
-# On your Lua, st buf was 120 bytes, with:
-#   mode at +8 (u16), mtime pointer-ish at +56 (time_t-ish), size at +72 (u64)
-# We'll mirror that layout.
 STAT_SIZE = 120
 STAT_OFF_MODE  = 8      # 16-bit
 STAT_OFF_MTIME = 56     # points/contains time_t (we'll just ignore formatting details)
 STAT_OFF_SIZE  = 72     # 64-bit
 
-# getdents entry layout mirrored from your Lua:
 # d_reclen at +0x4 (1 byte used in your script), name at +0x8 (64 bytes window)
 DIRENT_NAME_OFF = 0x8
 DIRENT_RECLEN_OFF = 0x4
@@ -415,7 +410,6 @@ class FTPServer:
             return
         if arg == "..":
             self.state.cur_path = dir_up(self.state.cur_path)
-            # your Lua snaps back to "/" if not at root after .. ; mirror that behavior
             if self.state.cur_path != "/":
                 self.state.cur_path = "/"
             self.ftp_send_ctrl("250 Requested file action okay, completed.\r\n")
@@ -520,11 +514,11 @@ class FTPServer:
         st.pasv_accepted_sock = None
 
     def _list_directory(self, path):
-        # Mirror Lua behavior/offsets. We'll craft simple "ls -l"-ish lines.
         fd = u64_to_i64(open_(path.encode("utf-8")+b"\0", O_RDONLY, 0))
         if fd < 0:
             return None, "550 Invalid directory. Got {}\r\n".format(path)
         out_lines = []
+        seen = set()
         buf = bytearray(4096)
         while True:
             nread = u64_to_i64(getdents_(fd, buf, 4096))
@@ -533,21 +527,19 @@ class FTPServer:
             off = 0
             end = nread
             while off < end:
-                # reclen (we mirror Lua; treat as 1 byte length at +4; guard against zero)
                 reclen = buf[off + DIRENT_RECLEN_OFF]
                 if reclen == 0:
                     break
                 name_bytes = bytes(buf[off + DIRENT_NAME_OFF: off + DIRENT_NAME_OFF + DIRENT_TMP_NAME_MAX])
                 # strip at first \0
                 name = name_bytes.split(b"\0",1)[0].decode("utf-8","ignore")
-                if name not in (".","..",""):
+                if name not in (".","..","") and name not in seen:
+                    seen.add(name)
                     full = (path if path != "/" else "") + "/" + name if path != "/" else "/" + name
                     stbuf = bytearray(STAT_SIZE)
                     if u64_to_i64(stat_(full.encode("utf-8")+b"\0", stbuf)) >= 0:
                         mode = read_u16_le(stbuf, STAT_OFF_MODE)
                         size = read_u64_le(stbuf, STAT_OFF_SIZE)
-                        # time fields (we'll fake month/day/hr:min as "--")
-                        # or craft using MON+day and 00:00 since exact FreeBSD tm offsets are messy
                         line = "{} 1 ps4 ps4 {:d} {} {:2d} {:02d}:{:02d} {}\r\n".format(
                             unix_mode_string(mode), size, MONTHS[0], 1, 0, 0, name
                         )
@@ -806,6 +798,7 @@ class FTPServer:
             except Exception as e:
                 # Best-effort robustness
                 self.ftp_send_ctrl("550 Internal server error\r\n")
+
         # cleanup
         try:
             close_(ctrl_sock)
@@ -820,12 +813,12 @@ class FTPServer:
             pass
 
     def run(self):
-        # Build our own FTP control listener (do NOT call Stage-1 create_tcp_socket)
         self.listen_sock = u64_to_i64(socket_(AF_INET, SOCK_STREAM, 0))
         if self.listen_sock < 0:
             raise Exception("socket() failed, errno=%d" % socket_.errno)
         # reuseaddr before bind (BSD)
         setsockopt_(self.listen_sock, SOL_SOCKET, SO_REUSEADDR, Enable4, 4)
+
         # bind to configured FTP port (e.g., 1337)
         sa = SockAddrIn.create()
         sa.sin_len    = 16
@@ -839,14 +832,14 @@ class FTPServer:
         if rc != 0:
             raise Exception("listen() failed rc=%d errno=%d" % (rc, listen_.errno))
 
-        # We know the control port (self.port). No need for getsockname here.
         ip_disp = self.ip or sc.get_current_ip() or "0.0.0.0"
-        print("[*] LOL FTP server running on %s:%d" % (ip_disp, self.port))
+        print("[*] FTP server running on %s:%d" % (ip_disp, self.port))
         sys.stdout.flush()
         try:
-            sc.send_notification("FTP Server listening on %s:%d" % (ip_disp, port))
+            sc.send_notification("FTP Server listening on %s:%d" % (ip_disp, self.port))
         except Exception:
             pass
+
         # Accept loop
         while self.running:
             addr = SockAddrIn.create()
