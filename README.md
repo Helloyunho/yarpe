@@ -33,10 +33,17 @@ Thanks https://github.com/shahrilnet/remote_lua_loader/blob/main/SETUP.md for th
     - You can set the `DEBUG` environment variable to `1` or `true` to enable debug messages.
 
 > [!NOTE]
-> You can also change the name of `savegame_container/log` to `persistent` and copy that instead of `1-1-LT1.save` if you want to execute the code immediately, but this makes the game unplayable until you delete the save data.
+> You can also change the name of `savegame_container/log` to `persistent`, zlib compress it and copy that instead of `1-1-LT1.save` if you want to execute the code immediately, but this makes the game unplayable until you delete the save data.
+
+> [!WARNING]
+> Doing this will certainly deletes your existing save data for that game. Make sure to back it up first!
 
 > [!NOTE]
 > Guide below assumes you already made a save file in the game you want to modify.
+
+> [!NOTE]
+> Due to Discord's file count limit, when you use the Discord bot to encrypt the save, you might not be able to upload all the files. Use `1-1-LT1.save`(rename from `1-1-LT1_unzipper.save` if you pickled it yourself by running `pack_unzipper.py`) to create one unified save containing all the files.
+> When you run the game, it will extract the files automatically.
 
 ### Changing the save data on PS4/PS4 Slim/PS4 Pro
 

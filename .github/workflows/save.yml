@@ -28,16 +28,21 @@ jobs:
         YARPE_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
       run: |
         python3 pack_savegame.py
+        python3 pack_unzipper.py
+        mv 1-1-LT1_unzipper.save 1-1-LT1.save
     - name: Upload save to artifact
       uses: actions/upload-artifact@v4
       with:
         name: savefile
         path: |
           ./save.zip
+          ./1-1-LT1.save
     - name: Create release
       uses: softprops/action-gh-release@v2
       if: github.ref_type == 'tag'
       with:
         body: |
           Read [README](./README.md) for usage.
-        files: ./save.zip
+        files: |
+          ./save.zip
+          ./1-1-LT1.save
