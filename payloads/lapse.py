@@ -4,6 +4,7 @@ Credits:
 - remote_lua_loader: This is basically a port of lapse.lua
 - cow: Gave a lot of hint to make this working
 - Gezine: Also gave a lot of hint to make this working
+- Kira: For testing with me and increasing the chance of exploit
 - earthonion: For testing with me and giving advice
 - Dr. YenYen: For testing with me
 - Sajjad: Also for testing with me
