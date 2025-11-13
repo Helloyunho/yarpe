@@ -5,6 +5,8 @@ from utils.conversion import u64_to_i64
 from utils.rp import log
 from constants import SYSCALL
 
+DEBUG = True
+
 NEEDED_SYSCALLS = {
     "recvfrom": 29,      # used for socket recv
     "connect": 98,
@@ -70,25 +72,16 @@ SockAddrIn = Structure(
     ]
 )
 
-# ---- helpers: read sin_port directly as big-endian, plus optional hexdump ----
+# ---- helpers: read sin_port directly as big-endian. ----
 def _be16_from_sockaddr(sa):
     # always read 2 bytes as a raw string
     raw = sa.get_field_raw("sin_port")
     rb = str(raw) if not isinstance(raw, bytes) else raw
     return struct.unpack(">H", rb)[0] if len(rb) >= 2 else 0
 
-def _hexdump_sockaddr(label, sa):
-    raw = sa.buf[:]  # 16 bytes
-    if not raw:
-        log("[dbg] %s sockaddr empty", label)
-        return
-    try:
-        # in Py2 bytearray iteration yields ints
-        line = ":".join("%02x" % b for b in raw)
-    except Exception:
-        s = str(raw)
-        line = ":".join("%02x" % ord(ch) for ch in s)
-    log("[dbg] %s sockaddr = %s", label, line)
+def debug_log(msg):
+    if DEBUG:
+        log(msg)
 
 # Helper: htons/htonl without depending on libc
 def htons(n):
@@ -226,24 +219,20 @@ class FTPServer:
         # MUST set reuse options BEFORE bind() on BSD
         sc.syscalls.setsockopt(s, SOL_SOCKET, SO_REUSEADDR, Enable4, 4)
         ret = u64_to_i64(sc.syscalls.bind(s, sa, 16))
-        log("[dbg] bind rc=%d errno=%d", ret, sc.syscalls.bind.errno)
+        debug_log("[dbg] bind rc=%d errno=%d" % (ret, sc.syscalls.bind.errno))
         if ret != 0:
             # if requested port is busy, retry once with ephemeral port
             if port != 0 and sc.syscalls.bind.errno == 48:  # EADDRINUSE
                 sa.sin_port = htons(0)
                 ret = u64_to_i64(sc.syscalls.bind(s, sa, 16))
-                log(
-                    "[dbg] bind(retry-ephemeral) rc=%d errno=%d",
-                    ret,
-                    sc.syscalls.bind.errno,
-                )
+                debug_log("[dbg] bind(retry-ephemeral) rc=%d errno=%d" % (ret, sc.syscalls.bind.errno))
             if ret != 0:
                 raise Exception(
                     "bind failed: %d errno=%d"
                     % (ret, sc.syscalls.bind.errno)
                 )
         ret = u64_to_i64(sc.syscalls.listen(s, 128))
-        log("[dbg] listen rc=%d errno=%d", ret, sc.syscalls.listen.errno)
+        debug_log("[dbg] listen rc=%d errno=%d" % (ret, sc.syscalls.listen.errno))
         if ret != 0:
             raise Exception(
                 "listen failed: %d errno=%d"
@@ -311,7 +300,44 @@ class FTPServer:
                     return line.decode("latin-1", "ignore")
 
     def ftp_send_ctrl(self, msg):
-        self.send_sock(self.state.ctrl_sock, msg)
+        # --- Normalize to unicode text ---
+        if isinstance(msg, unicode):
+            text = msg
+        elif isinstance(msg, bytearray):
+            try:
+                text = unicode(bytes(msg), "utf-8", "ignore")
+            except Exception:
+                text = u"".join(unichr(b & 0x7F) for b in msg)
+        elif isinstance(msg, str):  # Py2: str = bytes
+            try:
+                text = msg.decode("utf-8", "ignore")
+            except Exception:
+                text = u"".join(unichr(ord(c) & 0x7F) for c in msg)
+        else:
+            # Fallback for integers, etc.
+            text = unicode(str(msg), "utf-8", "ignore")
+
+        # --- Strip non-ASCII ---
+        out = []
+        for ch in text:
+            o = ord(ch)
+            if ch in u"\r\n":
+                out.append(ch)
+            elif 32 <= o <= 126:
+                out.append(ch)
+            else:
+                out.append(u"?")
+
+        clean = u"".join(out)
+
+        # --- CRLF enforcement ---
+        if not clean.endswith(u"\r\n"):
+            if clean.endswith(u"\n"):
+                clean = clean[:-1] + u"\r\n"
+            else:
+                clean += u"\r\n"
+
+        self.send_sock(self.state.ctrl_sock, clean.encode("utf-8"))
 
     def ftp_open_data(self):
         st = self.state
@@ -522,7 +548,7 @@ class FTPServer:
         )
 
         rc = u64_to_i64(sc.syscalls.bind(st.pasv_listen_sock, sa, 16))
-        log("[dbg] bind rc=%d errno=%d", rc, sc.syscalls.bind.errno)
+        debug_log("[dbg] bind rc=%d errno=%d" % (rc, sc.syscalls.bind.errno))
         if rc != 0:
             self.ftp_send_ctrl("425 Can't bind passive socket\r\n")
             try:
@@ -533,7 +559,7 @@ class FTPServer:
             return
 
         rc = u64_to_i64(sc.syscalls.listen(st.pasv_listen_sock, 1))
-        log("[dbg] listen rc=%d errno=%d", rc, sc.syscalls.listen.errno)
+        debug_log("[dbg] listen rc=%d errno=%d" % (rc, sc.syscalls.listen.errno))
         if rc != 0:
             self.ftp_send_ctrl(
                 "425 Can't listen on passive socket\r\n"
@@ -554,21 +580,10 @@ class FTPServer:
         rc = u64_to_i64(
             sc.syscalls.getsockname(st.pasv_listen_sock, picked, ln)
         )
-        log(
-            "[dbg] getsockname_(PASV) rc=%d ln=%d errno=%d",
-            rc,
-            ln.len,
-            sc.syscalls.getsockname.errno,
-        )
+        debug_log("[dbg] getsockname_(PASV) rc=%d ln=%d errno=%d" % (rc, ln.len, sc.syscalls.getsockname.errno))
 
-        # DEBUG: peek raw content and extract port robustly
-        _hexdump_sockaddr("PASV picked", picked)
         port = _be16_from_sockaddr(picked)
-        log(
-            "[dbg] PASV sin_port raw=0x%04x decoded=%d",
-            picked.sin_port & 0xFFFF,
-            port,
-        )
+        debug_log("[dbg] PASV sin_port raw=0x%04x decoded=%d" % (picked.sin_port & 0xFFFF, port))
 
         # reply with h1,h2,h3,h4,p1,p2
         a, b, c, d = [int(x) for x in self.ip.split(".")]
@@ -1095,7 +1110,7 @@ class FTPServer:
             )
 
         ip_disp = self.ip or sc.get_current_ip() or "0.0.0.0"
-        log("[*] FTP server running on %s:%d", ip_disp, self.port)
+        log("[*] FTP server running on %s:%d" % (ip_disp, self.port))
         try:
             sc.send_notification(
                 "FTP Server listening on %s:%d" % (ip_disp, self.port)
