@@ -87,7 +87,7 @@ log("Client connected on socket %d" % client_sock)
 
 read_size = -1
 update_file = b""
-while read_size > 0:
+while read_size != 0:
     read_size = u64_to_i64(
         sc.syscalls.read(
             client_sock,

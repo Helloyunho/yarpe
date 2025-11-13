@@ -1848,6 +1848,7 @@ def race_one(request_addr, tcp_sd, sds):
     debug_log("resume %s: %d" % (hex(thr_tid), result))
 
     wait_for(get_ref_addr(deletion_signal), 1)
+    debug_log("deletion signalled")
 
     if won_race:
         err_main_thr = struct.unpack("<I", sce_errs[0:4])[0]
