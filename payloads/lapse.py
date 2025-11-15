@@ -3837,6 +3837,13 @@ def post_exploitation_ps5():
 
 
 def kexploit():
+    if SHARED_VARS.get("lapsed", False):
+        log("[*] Lapse already ran before, reboot required to run again.")
+        sc.send_notification("Lapse already ran before, reboot required to run again.")
+        return
+
+    SHARED_VARS["lapsed"] = True
+
     prev_core = get_current_core()
     prev_rtprio = get_rtprio()
 
@@ -3936,6 +3943,9 @@ def kexploit():
     except:
         log("[-] Exploit failed")
         exc_msg = traceback.format_exc()
+        exc_msg += "\n\n"
+        exc_msg += "Please reboot the console before trying again.\n"
+        sc.send_notification("Lapse failed, please reboot the console.")
         log_exc(exc_msg)
     finally:
         sc.syscalls.close(block_fd)
