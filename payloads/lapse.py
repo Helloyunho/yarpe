@@ -3496,7 +3496,7 @@ def make_kernel_arw(pktopts_sds, k100_addr, kernel_addr, sds, sds_alt, aio_info_
     kernel.write_buffer = ipv6_kernel_rw.write_buffer
 
     kstr = kernel.read_null_terminated_string(kernel_addr)
-    log('*(&"evf cv"): %s' % kstr)
+    debug_log('*(&"evf cv"): %s' % kstr)
     if kstr != "evf cv":
         raise Exception('test read of &"evf cv" failed')
 
