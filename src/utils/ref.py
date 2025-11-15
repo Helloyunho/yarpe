@@ -1,6 +1,9 @@
 __all__ = ["refbytearray", "refbytes", "get_ref_addr"]
 
 
+from constants import nogc
+
+
 BYTES_HEADER_LEN = type(b"").__sizeof__(b"") - 1
 
 
@@ -28,6 +31,7 @@ def get_ref_addr(obj):
         return refbytes(obj)
     elif isinstance(obj, unicode):
         utf8data = obj.encode("utf-8") + b"\0"
+        nogc.append(utf8data)
         return refbytes(utf8data)
     elif isinstance(obj, StructureInstance):
         return refbytearray(obj.buf)
