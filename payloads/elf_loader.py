@@ -1,5 +1,8 @@
 import struct
 import traceback
+import os
+import pygame_sdl2
+from pygame_sdl2 import CONTROLLER_BUTTON_A
 from constants import CONSOLE_KIND, SHARED_VARS, SYSCALL
 from errors.socket import SocketError
 from offsets import LIBC_OFFSETS
@@ -23,6 +26,12 @@ if WRITING:
     s = 0
     sockaddr_in = bytearray()
     len_buf = bytearray()
+
+
+c = pygame_sdl2.controller.Controller(0)
+c.init()
+FORCE_SOCKET = c.get_button(CONTROLLER_BUTTON_A) == 1
+c.quit()
 
 
 KERNEL_OFFSETS = {
@@ -404,56 +413,65 @@ def main():
         log("Console is not jailbroken, cannot proceed.")
         return
 
-    buf = alloc(4096)
     payload_data = b""
 
-    ip = sc.get_current_ip()
-    if ip is None:
-        log("Send payload to port %d" % (port))
+    if os.path.exists("/saves/yarpe/elfldr.elf") and not FORCE_SOCKET:
+        log("Found elfldr.elf in /saves/yarpe/. Loading from save...")
+        with open("/saves/yarpe/elfldr.elf", "rb") as f:
+            payload_data = f.read()
     else:
-        log("Send payload to %s:%d" % (ip, port))
-
-    client_sock = u64_to_i64(
-        sc.syscalls.accept(
-            s,
-            sockaddr_in,
-            len_buf,
+        log(
+            "elfldr.elf not found in /saves/yarpe/ or X button pressed... Will wait for network transfer."
         )
-    )
-    if client_sock < 0:
-        raise SocketError(
-            "accept failed with return value %d, error %d\n%s"
-            % (
-                client_sock,
-                sc.syscalls.accept.errno,
-                sc.syscalls.accept.get_error_string(),
+        buf = alloc(4096)
+
+        ip = sc.get_current_ip()
+        if ip is None:
+            log("Send payload to port %d" % (port))
+        else:
+            log("Send payload to %s:%d" % (ip, port))
+
+        client_sock = u64_to_i64(
+            sc.syscalls.accept(
+                s,
+                sockaddr_in,
+                len_buf,
             )
         )
-
-    log("Client connected on socket %d" % client_sock)
-
-    read_size = -1
-    while read_size != 0:
-        read_size = u64_to_i64(
-            sc.syscalls.read(
-                client_sock,
-                buf,
-                4096,
-            )
-        )
-        payload_data += buf[:read_size]
-        if read_size < 0:
+        if client_sock < 0:
             raise SocketError(
-                "read failed with return value %d, error %d\n%s"
+                "accept failed with return value %d, error %d\n%s"
                 % (
-                    read_size,
-                    sc.syscalls.read.errno,
-                    sc.syscalls.read.get_error_string(),
+                    client_sock,
+                    sc.syscalls.accept.errno,
+                    sc.syscalls.accept.get_error_string(),
                 )
             )
 
-    payload_size = len(payload_data)
-    log("Received %d bytes" % payload_size)
+        log("Client connected on socket %d" % client_sock)
+
+        read_size = -1
+        while read_size != 0:
+            read_size = u64_to_i64(
+                sc.syscalls.read(
+                    client_sock,
+                    buf,
+                    4096,
+                )
+            )
+            payload_data += buf[:read_size]
+            if read_size < 0:
+                raise SocketError(
+                    "read failed with return value %d, error %d\n%s"
+                    % (
+                        read_size,
+                        sc.syscalls.read.errno,
+                        sc.syscalls.read.get_error_string(),
+                    )
+                )
+
+        payload_size = len(payload_data)
+        log("Received %d bytes" % payload_size)
 
     def run_elf_loader():
         elf = ElfLoader(payload_data)
