@@ -15,6 +15,8 @@ from utils.rp import log, log_exc
 from utils.unsafe import readbuf, writebuf
 
 
+# Port of https://github.com/shahrilnet/remote_lua_loader/blob/main/payloads/elf_loader.lua
+
 WRITING = False
 if WRITING:
     AF_INET = 0

@@ -10,6 +10,9 @@ from utils.rp import log
 from utils.unsafe import readbuf, readuint, writebuf
 from constants import SYSCALL, LIBC_OFFSETS
 
+
+# Port of https://github.com/shahrilnet/remote_lua_loader/blob/main/payloads/bin_loader.lua
+
 WRITING = False
 if WRITING:
     AF_INET = 0
