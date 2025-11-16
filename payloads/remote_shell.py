@@ -2,12 +2,13 @@ from __future__ import print_function
 
 import sys
 import traceback
+import pprint
 from StringIO import StringIO
+from constants import SYSCALL
 from utils.conversion import u64_to_i64
 from utils.etc import alloc
 from utils.rp import log
 from sc import sc
-
 
 WRITING = False
 
@@ -17,9 +18,23 @@ if WRITING:  # solo para que el editor se calle
     sockaddr_in = bytearray()
     len_buf = bytearray()
 
-
 PROMPT = "ps> "
 END_MARKER = "\n<<<END_OF_RESULT>>>\n"
+
+_pp = pprint.PrettyPrinter(indent=2, width=120, compact=False)
+
+
+def test_syscall(name, *args):
+    try:
+        fn = getattr(sc.syscalls, name)
+    except Exception as e:
+        return False, "syscall '%s' not found: %s" % (name, e)
+
+    try:
+        res = fn(*args)
+        return True, "retorno: %r" % (res,)
+    except Exception as e:
+        return False, "error while calling '%s': %s" % (name, e)
 
 
 def handle_special_commands(cmd, ctx):
@@ -37,20 +52,27 @@ def handle_special_commands(cmd, ctx):
         log("Exit requested.")
         raise SystemExit
 
+    if stripped == ".test_syscall":
+        parts = stripped.split()
+        if len(parts) < 2:
+            return "Uso: .test_syscall <name> [args]\n", ""
+
+        name = parts[1]
+        args = parts[2:]
+
+        ok, msg = test_syscall(name, *args)
+        out = "OK: %s\n" % msg if ok else "FAIL: %s\n" % msg
+        return out, ""
+
+    if stripped == ".syscalls":
+        names = sorted(SYSCALL.keys())
+        out = "Syscalls definidas:\n" + ", ".join(names) + "\n"
+        return out, ""
+
     # .vars -> mostrar keys de ctx
     if stripped == ".vars":
         names = sorted(ctx.keys())
         out = "Context variables:\n" + ", ".join(names) + "\n"
-        return out, ""
-
-    # .dir nombre
-    if stripped.startswith(".dir "):
-        name = stripped[5:].strip()
-        if name in ctx:
-            obj = ctx[name]
-            out = "dir(%s):\n%s\n" % (name, ", ".join(dir(obj)))
-        else:
-            out = "Name %r not found in context.\n" % name
         return out, ""
 
     # .type nombre
@@ -111,11 +133,10 @@ def handle_command(cmd, ctx):
         try:
             if mode == "eval":
                 result = eval(code_obj, ctx, ctx)
-                # Para ver contenido de expresiones tipo "renpy"
                 if result is not None:
-                    print(repr(result))
+                    print(_pp.pformat(result))
             else:
-                exec(code_obj, ctx, ctx)
+                exec code_obj in ctx, ctx
         except SystemExit:
             raise
         except Exception:
