@@ -1,10 +1,8 @@
-from __future__ import print_function
-
 import sys
 import traceback
-import pprint
 from StringIO import StringIO
 from constants import SYSCALL
+from errors.socket import SocketError
 from utils.conversion import u64_to_i64
 from utils.etc import alloc
 from utils.rp import log
@@ -12,7 +10,7 @@ from sc import sc
 
 WRITING = False
 
-if WRITING:  # solo para que el editor se calle
+if WRITING:
     port = 0
     s = 0
     sockaddr_in = bytearray()
@@ -21,30 +19,38 @@ if WRITING:  # solo para que el editor se calle
 PROMPT = "ps> "
 END_MARKER = "\n<<<END_OF_RESULT>>>\n"
 
-_pp = pprint.PrettyPrinter(indent=2, width=120, compact=False)
+SYSCALL["getpid"] = 20
+SYSCALL["kill"] = 37
+SIGKILL = 9
+
+def kill_game():
+    pid = u64_to_i64(sc.syscalls.getpid())
+    if pid < 0:
+        raise Exception(
+            "getpid failed with return value %d, error %d\n%s"
+            % (
+                pid,
+                sc.syscalls.getpid.errno,
+                sc.syscalls.getpid.get_error_string(),
+            )
+        )
+
+    ret = u64_to_i64(sc.syscalls.kill(pid, SIGKILL))
+    if ret < 0:
+        raise SocketError(
+            "kill failed with return value %d, error %d\n%s"
+            % (
+                ret,
+                sc.syscalls.kill.errno,
+                sc.syscalls.kill.get_error_string(),
+            )
+        )
 
 
-def test_syscall(name, *args):
-    try:
-        fn = getattr(sc.syscalls, name)
-    except Exception as e:
-        return False, "syscall '%s' not found: %s" % (name, e)
-
-    try:
-        res = fn(*args)
-        return True, "retorno: %r" % (res,)
-    except Exception as e:
-        return False, "error while calling '%s': %s" % (name, e)
-
-
+# CLI related
 def handle_special_commands(cmd, ctx):
     """
-    Comandos especiales tipo:
-      .exit / .quit
-      .vars         -> lista de nombres en el contexto
-      .dir nombre   -> dir(nombre)
-      .type nombre  -> type(nombre)
-      .repr nombre  -> repr(nombre)
+    Special commands
     """
     stripped = cmd.strip()
 
@@ -52,21 +58,23 @@ def handle_special_commands(cmd, ctx):
         log("Exit requested.")
         raise SystemExit
 
-    if stripped == ".test_syscall":
-        parts = stripped.split()
-        if len(parts) < 2:
-            return "Uso: .test_syscall <name> [args]\n", ""
+    if stripped.startswith(".load "):
+        name = stripped[6:].strip()
 
-        name = parts[1]
-        args = parts[2:]
+        # Ask client to send the addon payload
+        request = "__LOAD_REQUEST__:%s\n" % name
+        sc.syscalls.write(client_sock, request, len(request))
 
-        ok, msg = test_syscall(name, *args)
-        out = "OK: %s\n" % msg if ok else "FAIL: %s\n" % msg
-        return out, ""
+        # Do NOT produce output now, client will respond with code
+        return "", ""
+
+    if stripped == ".kill":
+        kill_game()
+        return "", ""
 
     if stripped == ".syscalls":
         names = sorted(SYSCALL.keys())
-        out = "Syscalls definidas:\n" + ", ".join(names) + "\n"
+        out = "Defined syscalls:\n" + ", ".join(names) + "\n"
         return out, ""
 
     # .vars -> mostrar keys de ctx
@@ -107,7 +115,7 @@ def handle_command(cmd, ctx):
         log("Empty command.")
         return "", ""
 
-    # Primero intentamos comandos especiales tipo .dir, .vars, etc.
+    # Primero intentamos comandos especiales tipo .vars, etc.
     special_out, special_err = handle_special_commands(cmd, ctx)
     if special_out is not None or special_err is not None:
         return special_out or "", special_err or ""
@@ -121,27 +129,16 @@ def handle_command(cmd, ctx):
     sys.stderr = stderr_buf
 
     try:
-        try:
-            code_obj = compile(cmd, "<remote>", "eval")
-            mode = "eval"
-            log("Compiled as eval.")
-        except SyntaxError:
-            code_obj = compile(cmd, "<remote>", "exec")
-            mode = "exec"
-            log("Compiled as exec.")
-
-        try:
-            if mode == "eval":
-                result = eval(code_obj, ctx, ctx)
-                if result is not None:
-                    print(_pp.pformat(result))
-            else:
-                exec code_obj in ctx, ctx
-        except SystemExit:
-            raise
-        except Exception:
-            log("Exception while running code.")
-            traceback.print_exc(file=stderr_buf)
+        code_obj = compile(cmd, "<remote>", "eval")
+        log("Compiled as eval.")
+        result = eval(code_obj, ctx, ctx)
+        if result is not None:
+            print(repr(result))
+    except SystemExit:
+        raise
+    except Exception:
+        log("Exception while running code.")
+        traceback.print_exc(file=stderr_buf)
     finally:
         sys.stdout = old_stdout
         sys.stderr = old_stderr
@@ -156,81 +153,111 @@ def handle_command(cmd, ctx):
 
     return out, err
 
+def handle_addon(client_sock, cmd):
+    buf1 = alloc(1)
+    name = cmd.split(":", 1)[1].strip()
+    code = ""
 
-# -----------------------------------------------------
-#  ACCEPT CONNECTION (reuse Stage-1 listener socket!)
-# -----------------------------------------------------
-buf1 = alloc(1)
-
-client_sock = u64_to_i64(sc.syscalls.accept(s, sockaddr_in, len_buf))
-
-# Send greeting
-greeting = (
-    "Remote Python console ready (Python 2.7).\n"
-    "Reusing Stage-1 listener socket.\n"
-    "Special commands: .exit, .quit, .vars, .dir name, .type name, .repr name\n"
-)
-sc.syscalls.write(client_sock, greeting, len(greeting))
-
-log("Accepted client_sock=%d" % client_sock)
-
-ctx = globals()
-log("Globals loaded into REPL context.")
-
-# -----------------------------------------------------
-#  REPL LOOP
-# -----------------------------------------------------
-while True:
-    log("Writing prompt.")
-    sc.syscalls.write(client_sock, PROMPT, len(PROMPT))
-
-    log("Reading command bytes...")
-    cmd_bytes = ""
-
-    # Read command line (1 byte at a time, buf1 es bytearray)
+    # Read until we encounter __LOAD_END__
     while True:
         n = u64_to_i64(sc.syscalls.read(client_sock, buf1, 1))
-        log("read() returned %d" % n)
-
         if n <= 0:
-            log("read <= 0, closing.")
-            sc.syscalls.close(client_sock)
-            raise SystemExit
-
-        # buf1[0] es un int 0–255; lo convertimos a char
-        c = chr(buf1[0])
-        log("Received raw byte: %r" % c)
-
-        cmd_bytes += c
-
-        if c == "\n":
-            log("Newline detected, end of command.")
             break
 
-    # Now decode
-    log("Decoding cmd_bytes=%r" % cmd_bytes)
+        c = chr(buf1[0])
+        code += c
+
+        if code.endswith("__LOAD_END__"):
+            code = code[:-len("__LOAD_END__")]  # strip marker
+            break
+
+    # Execute addon code
     try:
-        cmd = cmd_bytes.decode("utf-8", "replace")
+        exec compile(code, "<addon:%s>" % name, "exec") in ctx, ctx
+        msg = "Addon '%s' loaded successfully.\n" % name
     except Exception as e:
-        log("DECODE ERROR: %s" % e)
-        cmd = ""
+        msg = "Addon '%s' failed: %s\n" % (name, e)
 
-    log("Decoded command: %r" % cmd)
-
-    # Execute command
-    try:
-        out, err = handle_command(cmd, ctx)
-    except SystemExit:
-        bye = "Bye.\n"
-        sc.syscalls.write(client_sock, bye, len(bye))
-        sc.syscalls.close(client_sock)
-        break
-
-    # Send results
-    result = out + err
-    if result:
-        log("Sending result len=%d" % len(result))
-        sc.syscalls.write(client_sock, result, len(result))
-
+    sc.syscalls.write(client_sock, msg, len(msg))
     sc.syscalls.write(client_sock, END_MARKER, len(END_MARKER))
-    log("END_MARKER sent.")
+
+# Outer loop
+while True:
+    log("Waiting for incoming connection...")
+    client_sock = u64_to_i64(sc.syscalls.accept(s, sockaddr_in, len_buf))
+    log("Accepted client_sock=%d" % client_sock)
+
+    buf1 = alloc(1)
+
+    # Send greeting
+    greeting = (
+        "Remote Python console ready (Python 2.7).\n"
+        "Reusing Stage-1 listener socket.\n"
+        "Special commands: .exit, .quit, .vars, .type name, .repr name\n"
+    )
+    sc.syscalls.write(client_sock, greeting, len(greeting))
+
+    ctx = globals()
+    log("Globals loaded into REPL context.")
+
+    # -----------------------------------------------------
+    #  Inner REPL loop
+    # -----------------------------------------------------
+    while True:
+        log("Writing prompt.")
+        sc.syscalls.write(client_sock, PROMPT, len(PROMPT))
+
+        log("Reading command bytes...")
+        cmd_bytes = ""
+
+        # Read command line (1 byte at a time)
+        while True:
+            n = u64_to_i64(sc.syscalls.read(client_sock, buf1, 1))
+
+            if n <= 0:
+                log("read <= 0, closing.")
+                sc.syscalls.close(client_sock)
+                raise SystemExit
+
+            c = chr(buf1[0])
+            cmd_bytes += c
+
+            if c == "\n":
+                log("Newline detected, end of command.")
+                break
+
+        # Now decode
+        log("Decoding cmd_bytes=%r" % cmd_bytes)
+        try:
+            cmd = cmd_bytes.decode("utf-8", "replace")
+        except Exception as e:
+            log("DECODE ERROR: %s" % e)
+            cmd = ""
+
+        # Load addon
+        try:
+            if cmd.startswith("__LOAD_BEGIN__:"):
+                handle_addon(client_sock, cmd)
+                continue
+        except Exception as e:
+            log("Addon load ERROR: %s" % e)
+            cmd = ""
+
+        log("Decoded command: %r" % cmd)
+
+        # Execute command
+        try:
+            out, err = handle_command(cmd, ctx)
+        except SystemExit:
+            bye = "Bye.\n"
+            sc.syscalls.write(client_sock, bye, len(bye))
+            sc.syscalls.close(client_sock)
+            break
+
+        # Send results
+        result = out + err
+        if result:
+            log("Sending result len=%d" % len(result))
+            sc.syscalls.write(client_sock, result, len(result))
+
+        sc.syscalls.write(client_sock, END_MARKER, len(END_MARKER))
