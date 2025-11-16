@@ -1,6 +1,7 @@
 import socket
 import sys
 import os
+import transfers as xfer
 
 END_MARKER = b"\n<<<END_OF_RESULT>>>\n"
 
@@ -93,6 +94,22 @@ def main(host, port):
 
         # Normal command, send to remote
         s.sendall(line.encode("utf-8"))
+
+        # NEW: check for XFER stream
+        peek = s.recv(4096, socket.MSG_PEEK)
+        if b"__XFER_BEGIN__" in peek:
+            # process dump
+            x_type, name, raw = xfer.recv_xfer(s)
+            xfer.handle_xfer(x_type, name, raw)
+
+            # IMPORTANT: clean leftover END_MARKER
+            try:
+                peek_after = s.recv(len(END_MARKER), socket.MSG_PEEK)
+                if END_MARKER in peek_after:
+                    s.recv(len(END_MARKER))
+            except:
+                pass
+            continue
 
         # Read result
         result = recv_until(s, END_MARKER)
