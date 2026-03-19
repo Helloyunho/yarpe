@@ -13,7 +13,9 @@ Yet another Ren'Py PlayStation exploit
     - [Changing the save data on PS4/PS4 Slim/PS4 Pro/](#changing-the-save-data-on-ps4ps4-slimps4-pro)
         - [Jailbroken](#jailbroken)
         - [PSN(or fake)-Activated](#psnor-fake-activated)
-    - [Changing the save data on PS5/PS5 Slim/PS5 Pro (Only works with PS4 games)](#changing-the-save-data-on-ps5ps5-slimps5-pro-only-works-with-ps4-games)
+    - [Changing the save data on PS5/PS5 Slim/PS5 Pro](#changing-the-save-data-on-ps5ps5-slimps5-pro)
+        - [Jailbroken](#jailbroken-works-with-both-ps4-and-ps5-games)
+        - [PSN(or fake)-Activated](#psnor-fake-activated-only-works-with-ps4-games)
     - [Run custom code on the game](#run-custom-code-on-the-game)
     - [Updating yarpe](#updating-yarpe)
     - [Auto loader](#auto-loader)
@@ -77,20 +79,24 @@ Thanks https://github.com/shahrilnet/remote_lua_loader/blob/main/SETUP.md for th
 10. Use the PS4 settings menu to import the modified save data from USB. (`Settings -> Application Saved Data Management -> Saved Data on USB Storage Device -> Copy to System Storage -> Select your game and copy`)
 11. Run the game and see if the save data is changed(by looking at the save image).
 
-### Changing the save data on PS5/PS5 Slim/PS5 Pro (Only works with PS4 games)
+### Changing the save data on PS5/PS5 Slim/PS5 Pro
 
-- Requirements:
-    - PSN-activated PS5/PS5 Slim/PS5 Pro. Can be non-recent offline firmware if was activated in the past.
-    - A PSN(or fake)-activated PS4 on a firmware version that is earlier or equivilant to the PS5/PS5 Slim/PS5 Pro. Refer to this [table](https://www.psdevwiki.com/ps5/Build_Strings). For example, PS4 9.00 can be used to create save game for PS5 >=4.00 but not below that.
+#### Jailbroken (Works with both PS4 and PS5 games)
 
-#### Steps:
+1. Run the game once and create a save file in the game.
+2. Close the game.
+3. Send [garlic-savemgr](https://github.com/earthonion/garlic-savemgr) to elfldr.
+4. Open `http://<ps5-ip>:8082` on your PC browser.
+5. Go to the Browser tab and select the game.
+6. Unzip `save.zip` and drag and drop all the files in the unzipped folder to the garlic page.
+7. Click Unmount on the garlic page.
+8. Run the game and see if the save data is changed(by looking at the save image).
+
+#### PSN(or fake)-Activated (Only works with PS4 games)
+
 1. Find your logged-in PSN account id on the PS5/PS5 Slim/PS5 Pro. Either by going to the PlayStation settings or by using [this website](https://psn.flipscreen.games/).
 2. Take your account ID number (~19 characters long, for PSPlay) and convert it to hex using [this website](https://www.rapidtables.com/convert/number/decimal-to-hex.html).
-
-#### PS4
 3. Follow the "PSN-Activated" PS4/PS4 Slim/PS4 Pro guide above until step 7 to export the save data to USB drive.
-
-#### PSN-Activated PS5/PS5 Slim/PS5 Pro
 4. Make sure you're logged-in to the PSN-activated user.
 5. Connect your USB drive to the PS5/PS5 Slim/PS5 Pro.
 6. Use the PS5 settings menu to import the encrypted save data from the USB drive. (`Saved Data and Game/App Settings -> Saved Data (PS4) -> Copy or Delete from USB Drive -> Select your game and import`)
