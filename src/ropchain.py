@@ -77,9 +77,26 @@ class ROPChain(object):
     def push_value(self, value):
         self.append(value)
 
+    def _push_r9_setup(self, r9):
+        if CONSOLE_KIND == "PS4":
+            self.push_gadget("pop r9; ret")
+            self.push_value(r9)
+        else:
+            r9_container = alloc(0x20)
+            r9_container_addr = get_ref_addr(r9_container)
+            r9_container[0x18:0x20] = p64a(r9)
+            self.push_gadget("pop rax; ret")
+            self.push_value(r9_container_addr)
+            self.push_gadget("pop rsi; ret")
+            self.push_value(0)
+            self.push_gadget("pop r8; ret")
+            self.push_value(r9_container_addr)
+            self.push_gadget("mov r9, [rax+rsi+0x18]; xor eax, eax; mov [r8], r9; ret")
+
     def push_syscall(self, syscall_number, rdi=0, rsi=0, rdx=0, rcx=0, r8=0, r9=0):
         (rdi, rsi, rdx, rcx, r8, r9) = convert_regs_to_int(rdi, rsi, rdx, rcx, r8, r9)
 
+        self._push_r9_setup(r9)
         self.push_gadget("pop rax; ret")
         self.push_value(syscall_number)
         self.push_gadget("pop rdi; ret")
@@ -92,13 +109,6 @@ class ROPChain(object):
         self.push_value(rcx)
         self.push_gadget("pop r8; ret")
         self.push_value(r8)
-        if CONSOLE_KIND == "PS4":
-            self.push_gadget("pop r9; ret")
-            self.push_value(r9)
-        else:
-            self.push_gadget("pop r9; ret 0xc25a")
-            self.push_value(r9)
-            self.extend(b"\0" * 0xC25A)  # align the stack
         if self.sc.platform == "ps5":
             self.push_value(self.sc.syscall_addr)
         else:
@@ -107,6 +117,7 @@ class ROPChain(object):
     def push_call(self, addr, rdi=0, rsi=0, rdx=0, rcx=0, r8=0, r9=0):
         (rdi, rsi, rdx, rcx, r8, r9) = convert_regs_to_int(rdi, rsi, rdx, rcx, r8, r9)
 
+        self._push_r9_setup(r9)
         self.push_gadget("pop rdi; ret")
         self.push_value(rdi)
         self.push_gadget("pop rsi; ret")
@@ -117,13 +128,6 @@ class ROPChain(object):
         self.push_value(rcx)
         self.push_gadget("pop r8; ret")
         self.push_value(r8)
-        if CONSOLE_KIND == "PS4":
-            self.push_gadget("pop r9; ret")
-            self.push_value(r9)
-        else:
-            self.push_gadget("pop r9; ret 0xc25a")
-            self.push_value(r9)
-            self.extend(b"\0" * 0xC25A)  # align the stack
         self.push_value(addr)
 
     def push_get_return_value(self):
