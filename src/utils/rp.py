@@ -42,14 +42,22 @@ debug_char = rp.store.Character(
 )
 
 
+payload_log = []
+
+
 def log(*args):
     global debug_log
-    strings = " ".join([str(arg) for arg in list(args)]).split("\n")
+    msg = " ".join([str(arg) for arg in list(args)])
+    strings = msg.split("\n")
     debug_log.extend(strings)
     if len(debug_log) > 32:
         debug_log = debug_log[-32:]
     full_msg = "{nw}" + "\n".join(debug_log)
     rp.game.invoke_in_new_context(debug_char, full_msg)
+
+    from constants import SHARED_VARS
+    if SHARED_VARS.get("client_sock") is not None:
+        payload_log.append(msg + "\n")
 
 
 def log_exc(string):

@@ -111,7 +111,7 @@ def main():
     log("Injecting YARPE trigger into persistent object...")
 
     p.yarpe_trigger = Yummy()
-    p._changed = True   # Forces Ren'Py to rewrite persistent safely
+    p._changed["yarpe_trigger"] = True   # Forces Ren'Py to rewrite persistent safely
 
     # ---------------------------------------------------------
     # Re-pickle persistent (protocol 2) and recompress

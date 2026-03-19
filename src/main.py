@@ -4,7 +4,7 @@ import os
 import pygame_sdl2
 from pygame_sdl2 import CONTROLLER_BUTTON_Y
 from utils.fs import file_exists, read_file_data
-from utils.rp import log, log_exc
+from utils.rp import log, log_exc, payload_log
 from utils.tcp import (
     create_tcp_client,
     create_tcp_server,
@@ -164,7 +164,10 @@ def poc():
 
         log("Received payload, executing...")
 
-        close_socket(client_sock)  # close client socket
+        # Keep client_sock open so payload log can be sent back
+        SHARED_VARS["client_sock"] = client_sock
+
+        payload_log[:] = []
 
         # Execute code, mimic file-exec by throwing local/global in same scope
         scope = dict(globals(), **locals())
@@ -174,6 +177,15 @@ def poc():
         except:
             exc_msg = traceback.format_exc()
             log_exc(exc_msg)
+        finally:
+            try:
+                if payload_log:
+                    write_to_socket(client_sock, "".join(payload_log).encode("utf-8"))
+            except Exception:
+                pass
+            payload_log[:] = []
+            SHARED_VARS.pop("client_sock", None)
+            close_socket(client_sock)
 
     close_socket(s)  # close listening socket
 
