@@ -25,6 +25,7 @@ Yet another Ren'Py PlayStation exploit
 
 - A YEAR OF SPRINGS PS4 (CUSA30428, CUSA30429, CUSA30430, CUSA30431)
 - Arcade Spirits: The New Challengers PS4 (CUSA32096, CUSA32097)
+- Arcade Spirits: The New Challengers PS5 (PPSA06409, PPSA06410)
 
 ## How to use
 

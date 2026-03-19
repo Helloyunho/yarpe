@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
     - uses: actions/setup-python@v6
       with:
         python-version: '3.12'
@@ -31,7 +31,7 @@ jobs:
         python3 pack_unzipper.py
         mv 1-1-LT1_unzipper.save 1-1-LT1.save
     - name: Upload save to artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: savefile
         path: |
