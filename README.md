@@ -1,3 +1,6 @@
+> [!WARNING]
+> This project is not maintained anymore. There will be no further updates or support for this project. If you want to continue using this project, you can fork it and maintain it yourself.
+
 # yarpe
 
 Yet another Ren'Py PlayStation exploit
